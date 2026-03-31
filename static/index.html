@@ -13,7 +13,7 @@
 <body>
 <div class="layout">
   <aside class="sidebar">
-    <div class="sidebar-header"><div class="logo">H</div><div><h1 style="margin:0;font-size:15px;font-weight:700;letter-spacing:-.01em">Hermes</h1><div style="font-size:10px;color:var(--muted);opacity:.8;margin-top:1px">v0.1.0 · WebUI</div></div></div>
+    <div class="sidebar-header"><div class="logo">H</div><div><h1 style="margin:0;font-size:15px;font-weight:700;letter-spacing:-.01em">Hermes</h1><div style="font-size:10px;color:var(--muted);opacity:.8;margin-top:1px">v0.2</div></div></div>
     <div class="sidebar-nav">
       <button class="nav-tab active" data-panel="chat" data-label="Chat" onclick="switchPanel('chat')" title="Chat">&#128172;</button>
       <button class="nav-tab" data-panel="tasks" data-label="Tasks" onclick="switchPanel('tasks')" title="Tasks">&#128197;</button>
@@ -135,6 +135,8 @@
       <div class="sidebar-actions">
         <button class="sm-btn" id="btnDownload" title="Download as Markdown">&#8595; Transcript</button>
         <button class="sm-btn" id="btnExportJSON" title="Export full session as JSON">&#10092;/&#10093; JSON</button>
+        <button class="sm-btn" id="btnImportJSON" title="Import session from JSON">&#8593; Import</button>
+        <input type="file" id="importFileInput" accept=".json" style="display:none">
       </div>
     </div>
   <div class="resize-handle" id="sidebarResize"></div>
@@ -149,6 +151,7 @@
           <div class="ws-dropdown" id="wsDropdown"></div>
         </div>
         <button class="chip clear-btn" id="btnClearConv" onclick="clearConversation()" title="Clear all messages in this conversation" style="display:none">&#128465; Clear</button>
+        <button class="chip gear-btn" id="btnSettings" onclick="toggleSettings()" title="Settings">&#9881;</button>
       </div>
     </div>
     <div class="messages" id="messages">
@@ -234,6 +237,7 @@
       <span>Workspace</span>
       <div class="panel-actions">
         <button class="panel-icon-btn" id="btnNewFile" title="New file" onclick="promptNewFile()">&#43;</button>
+        <button class="panel-icon-btn" id="btnNewFolder" title="New folder" onclick="promptNewFolder()">&#128193;</button>
         <button class="panel-icon-btn" id="btnRefreshPanel" title="Refresh" onclick="if(S.session)loadDir('.')">&#8635;</button>
         <button class="panel-icon-btn close-preview" id="btnClearPreview" title="Close preview">&#10005;</button>
       </div>
@@ -252,6 +256,25 @@
       <textarea id="previewEditArea" style="display:none;flex:1;width:100%;background:var(--code-bg);color:#e2e8f0;border:1px solid var(--border2);border-radius:8px;padding:12px;font-family:'SF Mono',ui-monospace,monospace;font-size:12px;line-height:1.6;resize:none;outline:none" oninput="_previewDirty=true;updateEditBtn()"></textarea>
     </div>
   </aside>
+</div>
+<div class="settings-overlay" id="settingsOverlay" style="display:none">
+  <div class="settings-panel">
+    <div class="settings-header">
+      <h3 style="margin:0;font-size:16px">Settings</h3>
+      <button class="panel-icon-btn" onclick="toggleSettings()" title="Close">&#10005;</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-field">
+        <label for="settingsModel">Default Model</label>
+        <select id="settingsModel" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px"></select>
+      </div>
+      <div class="settings-field">
+        <label for="settingsWorkspace">Default Workspace</label>
+        <select id="settingsWorkspace" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px"></select>
+      </div>
+      <button class="sm-btn" onclick="saveSettings()" style="margin-top:12px;width:100%;padding:8px;font-weight:600">Save Settings</button>
+    </div>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 <script src="/static/ui.js"></script>

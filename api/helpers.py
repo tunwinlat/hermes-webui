@@ -1,5 +1,5 @@
 """
-Hermes WebUI -- HTTP helper functions.
+Hermes Web UI -- HTTP helper functions.
 """
 import json as _json
 from pathlib import Path

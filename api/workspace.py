@@ -1,5 +1,5 @@
 """
-Hermes WebUI -- Workspace and file system helpers.
+Hermes Web UI -- Workspace and file system helpers.
 """
 import json
 import os

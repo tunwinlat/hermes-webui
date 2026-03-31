@@ -55,6 +55,7 @@ async function loadSession(sid){
 
 let _allSessions = [];  // cached for search filter
 let _renamingSid = null;  // session_id currently being renamed (blocks list re-renders)
+let _showArchived = false;  // toggle to show archived sessions
 
 async function renderSessionList(){
   try{
@@ -92,29 +93,69 @@ function renderSessionListFromCache(){
   const titleMatches=q?_allSessions.filter(s=>(s.title||'Untitled').toLowerCase().includes(q)):_allSessions;
   // Merge content matches (deduped): content matches appended after title matches
   const titleIds=new Set(titleMatches.map(s=>s.session_id));
-  const sessions=q?[...titleMatches,..._contentSearchResults.filter(s=>!titleIds.has(s.session_id))]:titleMatches;
+  const allMatched=q?[...titleMatches,..._contentSearchResults.filter(s=>!titleIds.has(s.session_id))]:titleMatches;
+  // Filter archived unless toggle is on
+  const sessions=_showArchived?allMatched:allMatched.filter(s=>!s.archived);
+  const archivedCount=allMatched.filter(s=>s.archived).length;
   const list=$('sessionList');list.innerHTML='';
-  // Date grouping: Today / Yesterday / Earlier
+  // Show/hide archived toggle if there are archived sessions
+  if(archivedCount>0){
+    const toggle=document.createElement('div');
+    toggle.style.cssText='font-size:10px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:center;opacity:.7;';
+    toggle.textContent=_showArchived?'Hide archived':'Show '+archivedCount+' archived';
+    toggle.onclick=()=>{_showArchived=!_showArchived;renderSessionListFromCache();};
+    list.appendChild(toggle);
+  }
+  // Separate pinned from unpinned
+  const pinned=sessions.filter(s=>s.pinned);
+  const unpinned=sessions.filter(s=>!s.pinned);
+  // Date grouping: Pinned / Today / Yesterday / Earlier
   const now=Date.now();
   const ONE_DAY=86400000;
   let lastGroup='';
-  for(const s of sessions.slice(0,50)){
-    const ts=(s.updated_at||0)*1000;
-    const group=ts>now-ONE_DAY?'Today':ts>now-2*ONE_DAY?'Yesterday':'Earlier';
-    if(group!==lastGroup){
-      lastGroup=group;
-      const hdr=document.createElement('div');
-      hdr.style.cssText='font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:10px 10px 4px;opacity:.8;';
-      hdr.textContent=group;
-      list.appendChild(hdr);
+  const ordered=[...pinned,...unpinned].slice(0,50);
+  if(pinned.length){
+    const hdr=document.createElement('div');
+    hdr.style.cssText='font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#f5c542;padding:10px 10px 4px;opacity:.9;';
+    hdr.textContent='\u2605 Pinned';
+    list.appendChild(hdr);
+  }
+  for(const s of ordered){
+    if(!s.pinned){
+      const ts=(s.updated_at||s.created_at||0)*1000;  // group by last activity, not creation
+      const group=ts>now-ONE_DAY?'Today':ts>now-2*ONE_DAY?'Yesterday':'Earlier';
+      if(group!==lastGroup){
+        lastGroup=group;
+        const hdr=document.createElement('div');
+        hdr.style.cssText='font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:10px 10px 4px;opacity:.8;';
+        hdr.textContent=group;
+        list.appendChild(hdr);
+      }
     }
     const el=document.createElement('div');
     const isActive=S.session&&s.session_id===S.session.session_id;
-    el.className='session-item'+(isActive?' active':'')+(isActive&&S.session&&S.session._flash?' new-flash':'');
+    el.className='session-item'+(isActive?' active':'')+(isActive&&S.session&&S.session._flash?' new-flash':'')+(s.archived?' archived':'');
     if(isActive&&S.session&&S.session._flash)delete S.session._flash;
+    const rawTitle=s.title||'Untitled';
+    const tags=(rawTitle.match(/#[\w-]+/g)||[]);
+    const cleanTitle=tags.length?rawTitle.replace(/#[\w-]+/g,'').trim():rawTitle;
     const title=document.createElement('span');
-    title.className='session-title';title.textContent=s.title||'Untitled';
+    title.className='session-title';
+    title.textContent=cleanTitle||'Untitled';
     title.title='Double-click to rename';
+    // Append tag chips after the title text
+    for(const tag of tags){
+      const chip=document.createElement('span');
+      chip.className='session-tag';
+      chip.textContent=tag;
+      chip.title='Click to filter by '+tag;
+      chip.onclick=(e)=>{
+        e.stopPropagation();
+        const searchBox=$('sessionSearch');
+        if(searchBox){searchBox.value=tag;filterSessions();}
+      };
+      title.appendChild(chip);
+    }
 
     // Rename: called directly when we confirm it's a double-click
     const startRename=()=>{
@@ -149,10 +190,50 @@ function renderSessionListFromCache(){
       setTimeout(()=>{inp.focus();inp.select();},10);
     };
 
+    const pin=document.createElement('span');
+    pin.className='session-pin'+(s.pinned?' pinned':'');
+    pin.innerHTML=s.pinned?'&#9733;':'&#9734;';
+    pin.title=s.pinned?'Unpin':'Pin to top';
+    pin.onclick=async(e)=>{
+      e.stopPropagation();e.preventDefault();
+      const newPinned=!s.pinned;
+      try{
+        await api('/api/session/pin',{method:'POST',body:JSON.stringify({session_id:s.session_id,pinned:newPinned})});
+        s.pinned=newPinned;
+        if(S.session&&S.session.session_id===s.session_id) S.session.pinned=newPinned;
+        renderSessionList();
+      }catch(err){showToast('Pin failed: '+err.message);}
+    };
+    const archive=document.createElement('button');
+    archive.className='session-action-btn';archive.innerHTML=s.archived?'&#9993;':'&#128230;';
+    archive.title=s.archived?'Unarchive':'Archive';
+    archive.onclick=async(e)=>{
+      e.stopPropagation();e.preventDefault();
+      try{
+        await api('/api/session/archive',{method:'POST',body:JSON.stringify({session_id:s.session_id,archived:!s.archived})});
+        s.archived=!s.archived;
+        if(S.session&&S.session.session_id===s.session_id) S.session.archived=s.archived;
+        await renderSessionList();
+        showToast(s.archived?'Session archived':'Session restored');
+      }catch(err){showToast('Archive failed: '+err.message);}
+    };
+    const dup=document.createElement('button');
+    dup.className='session-dup';dup.innerHTML='&#10697;';dup.title='Duplicate';
+    dup.onclick=async(e)=>{
+      e.stopPropagation();e.preventDefault();
+      try{
+        const res=await api('/api/session/new',{method:'POST',body:JSON.stringify({workspace:s.workspace,model:s.model})});
+        if(res.session){
+          await api('/api/session/rename',{method:'POST',body:JSON.stringify({session_id:res.session.session_id,title:(s.title||'Untitled')+' (copy)'})});
+          await loadSession(res.session.session_id);await renderSessionList();
+          showToast('Session duplicated');
+        }
+      }catch(err){showToast('Duplicate failed: '+err.message);}
+    };
     const trash=document.createElement('button');
     trash.className='session-trash';trash.innerHTML='&#128465;';trash.title='Delete';
     trash.onclick=async(e)=>{e.stopPropagation();e.preventDefault();await deleteSession(s.session_id);};
-    el.appendChild(title);el.appendChild(trash);
+    el.appendChild(pin);el.appendChild(title);el.appendChild(archive);el.appendChild(dup);el.appendChild(trash);
 
     // Use a click timer to distinguish single-click (navigate) from double-click (rename).
     // This prevents loadSession from firing on the first click of a double-click,
@@ -160,7 +241,7 @@ function renderSessionListFromCache(){
     let _clickTimer=null;
     el.onclick=async(e)=>{
       if(_renamingSid) return; // ignore while any rename is active
-      if(e.target===trash||trash.contains(e.target)) return; // trash handles itself
+      if([trash,dup,archive].some(b=>e.target===b||b.contains(e.target))) return;
       clearTimeout(_clickTimer);
       _clickTimer=setTimeout(async()=>{
         _clickTimer=null;

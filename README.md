@@ -104,8 +104,10 @@ If you prefer to launch the server directly:
 
 ```bash
 cd /path/to/hermes-agent          # or wherever sys.path can find Hermes modules
-HERMES_WEBUI_PORT=8787 python /path/to/hermes-webui/server.py
+HERMES_WEBUI_PORT=8787 venv/bin/python /path/to/hermes-webui/server.py
 ```
+
+Note: use the agent venv Python (or any Python environment that has the Hermes agent dependencies installed). System Python will be missing `openai`, `httpx`, and other required packages.
 
 Health check:
 
@@ -127,7 +129,7 @@ python -m pytest tests/ -v
 Or using the agent venv explicitly:
 
 ```bash
-/path/to/hermes-agent/venv/bin/python -m pytest tests/ -v
+/path/to/hermes-agent/venv/bin/python -m pytest tests/ -v   # or any Python with deps installed
 ```
 
 Tests run against an isolated server on port 8788 with a separate state directory.
@@ -139,32 +141,44 @@ Production data and real cron jobs are never touched.
 
 ### Chat and agent
 - Streaming responses via SSE (tokens appear as they are generated)
-- 10+ models across OpenAI, Anthropic, and other providers; last-used model persists
+- Multi-provider model support -- any Hermes API provider (OpenAI, Anthropic, Google, DeepSeek, Nous Portal, OpenRouter); dynamic model dropdown populated from configured keys
 - Send a message while one is processing -- it queues automatically
 - Edit any past user message inline and regenerate from that point
 - Retry the last assistant response with one click
 - Cancel a running task from the activity bar
 - Tool call cards inline -- each shows the tool name, args, and result snippet
+- Mermaid diagram rendering inline (flowcharts, sequence diagrams, gantt charts)
 - Approval card for dangerous shell commands (allow once / session / always / deny)
+- SSE auto-reconnect on network blips (SSH tunnel resilience)
 - File attachments persist across page reloads
+- Message timestamps (HH:MM next to each message, full date on hover)
 
 ### Sessions
-- Create, rename, delete, search by title and message content
+- Create, rename, duplicate, delete, search by title and message content
+- Pin/star sessions to the top of the sidebar
+- Archive sessions (hide without deleting, toggle to show)
+- Session tags -- add #tag to titles for colored chips and click-to-filter
 - Grouped by Today / Yesterday / Earlier in the sidebar
-- Download as Markdown transcript or full JSON export
+- Download as Markdown transcript, full JSON export, or import from JSON
 - Sessions persist across page reloads and SSH tunnel reconnects
+- Browser tab title reflects the active session name
 
 ### Workspace file browser
 - Browse directory tree with type icons
 - Preview text, code, Markdown (rendered), and images inline
-- Edit files in the browser
-- Create and delete files
+- Edit, create, delete, and rename files; create folders
 - Right panel is drag-resizable
+- Syntax highlighted code preview (Prism.js)
+
+### Settings and configuration
+- Settings panel (gear icon in topbar) -- persist default model and default workspace server-side
+- Cron completion alerts -- toast notifications and unread badge on Tasks tab
+- Background agent error alerts -- banner when a non-active session encounters an error
 
 ### Panels
-- **Chat** -- session list, search, new conversation
-- **Tasks** -- view, create, edit, run, pause/resume, delete cron jobs
-- **Skills** -- list all skills by category, search, preview, create/edit
+- **Chat** -- session list, search, pin, archive, new conversation
+- **Tasks** -- view, create, edit, run, pause/resume, delete cron jobs; completion alerts
+- **Skills** -- list all skills by category, search, preview, create/edit/delete
 - **Memory** -- view and edit MEMORY.md and USER.md inline
 - **Todos** -- live task list from the current session
 - **Spaces** -- add, rename, remove workspaces; quick-switch from topbar
@@ -174,9 +188,10 @@ Production data and real cron jobs are never touched.
 ## Architecture
 
 ```
-server.py               HTTP routing shell
+server.py               HTTP routing shell (~76 lines)
 api/
-  config.py             Discovery + globals (HOST, PORT, SESSIONS, etc.)
+  routes.py             All GET + POST route handlers
+  config.py             Discovery + globals + model provider detection
   helpers.py            HTTP helpers: j(), bad(), require(), safe_resolve()
   models.py             Session model + CRUD
   workspace.py          File ops: list_dir, read_file_content, workspace helpers
@@ -185,20 +200,20 @@ api/
 static/
   index.html            HTML template
   style.css             All CSS
-  ui.js                 DOM helpers, renderMd, tool cards
+  ui.js                 DOM helpers, renderMd, Mermaid, tool cards, file tree
   workspace.js          File tree, preview, file ops
-  sessions.js           Session CRUD, list rendering, search
+  sessions.js           Session CRUD, list rendering, search, tags, archive
   messages.js           send(), SSE event handlers, approval, transcript
-  panels.js             Cron, skills, memory, workspace, todo, switchPanel
+  panels.js             Cron, skills, memory, workspace, todo, switchPanel, alerts
   boot.js               Event wiring + boot IIFE
 tests/
   conftest.py           Isolated test server (port 8788, separate HERMES_HOME)
-  test_sprint1-10.py    Feature tests per sprint
+  test_sprint1-14.py    Feature tests per sprint
   test_regressions.py   Permanent regression gate
 ```
 
 State lives outside the repo at `~/.hermes/webui-mvp/` by default
-(sessions, workspaces, last_workspace). Override with `HERMES_WEBUI_STATE_DIR`.
+(sessions, workspaces, settings, last_workspace). Override with `HERMES_WEBUI_STATE_DIR`.
 
 ---
 

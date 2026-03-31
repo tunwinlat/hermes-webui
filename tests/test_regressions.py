@@ -156,14 +156,17 @@ def test_cancel_nonexistent_stream_returns_not_cancelled(cleanup_test_sessions):
 
 
 def test_server_py_sse_loop_breaks_on_cancel(cleanup_test_sessions):
-    """R5b: server.py SSE loop must include 'cancel' in the break condition.
+    """R5b: SSE loop must include 'cancel' in the break condition.
     When missing, the connection hung after the cancel event was processed.
+    Sprint 11: logic moved from server.py to api/routes.py -- check both.
     """
-    src = (REPO_ROOT / "server.py").read_text()
-    # Find the SSE break condition
     import re
-    m = re.search(r"if event in \([^)]+\):\s*break", src)
-    assert m, "SSE break condition not found in server.py"
+    # Check server.py first, then api/routes.py (Sprint 11 extracted routes)
+    src = (REPO_ROOT / "server.py").read_text()
+    routes_src = (REPO_ROOT / "api" / "routes.py").read_text() if (REPO_ROOT / "api" / "routes.py").exists() else ""
+    combined = src + routes_src
+    m = re.search(r"if event in \([^)]+\):\s*break", combined)
+    assert m, "SSE break condition not found in server.py or api/routes.py"
     assert "cancel" in m.group(), \
         f"'cancel' missing from SSE break condition: {m.group()}"
 
@@ -275,16 +278,21 @@ def test_deleted_session_does_not_appear_in_list(cleanup_test_sessions):
 
 
 def test_server_delete_invalidates_index(cleanup_test_sessions):
-    """R8b: server.py session/delete handler must unlink _index.json.
+    """R8b: session/delete handler must unlink _index.json.
     Static check that the fix is in place.
+    Sprint 11: handler moved from server.py to api/routes.py -- check both.
     """
     src = (REPO_ROOT / "server.py").read_text()
-    # Find the delete handler and verify it unlinks the index
-    delete_idx = src.find("if parsed.path == '/api/session/delete':")
-    assert delete_idx >= 0, "session/delete handler not found"
-    delete_block = src[delete_idx:delete_idx+600]
-    assert "SESSION_INDEX_FILE" in delete_block,         "server.py session/delete must invalidate SESSION_INDEX_FILE"
-
+    routes_src = (REPO_ROOT / "api" / "routes.py").read_text() if (REPO_ROOT / "api" / "routes.py").exists() else ""
+    # Find the delete handler in either file
+    for label, text in [("server.py", src), ("api/routes.py", routes_src)]:
+        delete_idx = text.find("if parsed.path == '/api/session/delete':")
+        if delete_idx >= 0:
+            delete_block = text[delete_idx:delete_idx+600]
+            assert "SESSION_INDEX_FILE" in delete_block, \
+                f"{label} session/delete must invalidate SESSION_INDEX_FILE"
+            return
+    assert False, "session/delete handler not found in server.py or api/routes.py"
 
 # ── R9: Token/tool SSE events write to wrong session after switch ─────────────
 
@@ -292,25 +300,36 @@ def test_token_handler_guards_session_id(cleanup_test_sessions):
     """R9a: The SSE token event handler must check activeSid before writing to DOM.
     When missing, tokens from session A would render into session B's message area
     if the user switched sessions mid-stream.
+    Sprint 12: handler moved into _wireSSE(source), so search source.addEventListener.
     """
     src = (REPO_ROOT / "static/messages.js").read_text()
-    # Find the token event handler
-    token_idx = src.find("es.addEventListener('token'")
+    # Sprint 12 refactored es.addEventListener -> source.addEventListener inside _wireSSE()
+    token_idx = src.find("source.addEventListener('token'")
+    if token_idx < 0:
+        token_idx = src.find("es.addEventListener('token'")
     assert token_idx >= 0, "token event handler not found"
     token_block = src[token_idx:token_idx+300]
-    assert "activeSid" in token_block,         "token handler must check activeSid before writing to DOM"
-    assert "S.session.session_id!==activeSid" in token_block or            "S.session.session_id===activeSid" in token_block,         "token handler must compare current session to activeSid"
+    assert "activeSid" in token_block, \
+        "token handler must check activeSid before writing to DOM"
+    assert "S.session.session_id!==activeSid" in token_block or \
+           "S.session.session_id===activeSid" in token_block, \
+    "token handler must compare current session to activeSid"
 
 
 def test_tool_handler_guards_session_id(cleanup_test_sessions):
     """R9b: The SSE tool event handler must check activeSid before writing to DOM.
     When missing, tool cards from session A would render into session B's message area.
+    Sprint 12: handler moved into _wireSSE(source), so search source.addEventListener.
     """
     src = (REPO_ROOT / "static/messages.js").read_text()
-    tool_idx = src.find("es.addEventListener('tool'")
+    tool_idx = src.find("source.addEventListener('tool'")
+    if tool_idx < 0:
+        tool_idx = src.find("es.addEventListener('tool'")
     assert tool_idx >= 0, "tool event handler not found"
     tool_block = src[tool_idx:tool_idx+400]
-    assert "activeSid" in tool_block,         "tool handler must check activeSid before writing to DOM"
+    assert "activeSid" in tool_block, \
+        "tool handler must check activeSid before writing to DOM"
+
 
 # ── R10: respondApproval uses wrong session_id after switch (multi-session) ─
 
@@ -337,8 +356,10 @@ def test_tool_status_only_shown_for_current_session(cleanup_test_sessions):
     When missing, session A's tool names would appear in session B's activity bar.
     """
     src = (REPO_ROOT / "static/messages.js").read_text()
-    # Find the tool event handler
-    tool_idx = src.find("es.addEventListener('tool'")
+    # Sprint 12: handler moved into _wireSSE(source)
+    tool_idx = src.find("source.addEventListener('tool'")
+    if tool_idx < 0:
+        tool_idx = src.find("es.addEventListener('tool'")
     assert tool_idx >= 0
     tool_block = src[tool_idx:tool_idx+400]
     # setStatus must be inside the activeSid guard, not before it
@@ -347,8 +368,8 @@ def test_tool_status_only_shown_for_current_session(cleanup_test_sessions):
     assert guard_pos >= 0, "tool handler must guard with activeSid check"
     # The guard must appear BEFORE or AROUND the setStatus call
     # (status only fires for the current session)
-    assert status_pos > tool_block.find("activeSid"),         "setStatus in tool handler must be inside the activeSid guard"
-
+    assert status_pos > tool_block.find("activeSid"), \
+        "setStatus in tool handler must be inside the activeSid guard"
 
 # ── R12: Live tool cards lost on switch-away and switch-back ──────────────
 
@@ -375,7 +396,10 @@ def test_done_handler_sets_busy_false_before_renderMessages(cleanup_test_session
     tool cards are skipped entirely after a response completes.
     """
     src = (REPO_ROOT / "static/messages.js").read_text()
-    done_idx = src.find("es.addEventListener('done'")
+    # Sprint 12: handler moved into _wireSSE(source)
+    done_idx = src.find("source.addEventListener('done'")
+    if done_idx < 0:
+        done_idx = src.find("es.addEventListener('done'")
     assert done_idx >= 0
     done_block = src[done_idx:done_idx+1500]
     # S.busy=false must appear before renderMessages() within the done handler

@@ -1,4 +1,4 @@
-# Hermes WebUI: Browser Testing Plan
+# Hermes Web UI: Browser Testing Plan
 
 > This document is for manual browser testing by you or by a Claude browser agent.
 > It covers every user-facing feature of the UI through Sprint 2.

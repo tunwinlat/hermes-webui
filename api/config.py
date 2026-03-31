@@ -1,5 +1,5 @@
 """
-Hermes WebUI -- Shared configuration, constants, and global state.
+Hermes Web UI -- Shared configuration, constants, and global state.
 Imported by all other api/* modules and by server.py.
 
 Discovery order for all paths:
@@ -37,6 +37,7 @@ STATE_DIR = Path(os.getenv(
 SESSION_DIR           = STATE_DIR / 'sessions'
 WORKSPACES_FILE       = STATE_DIR / 'workspaces.json'
 SESSION_INDEX_FILE    = SESSION_DIR / '_index.json'
+SETTINGS_FILE         = STATE_DIR / 'settings.json'
 LAST_WORKSPACE_FILE   = STATE_DIR / 'last_workspace.txt'
 
 # ── Hermes agent directory discovery ─────────────────────────────────────────
@@ -238,6 +239,203 @@ CLI_TOOLSETS = cfg.get('platform_toolsets', {}).get('cli', [
     'web', 'webhook',
 ])
 
+# ── Model / provider discovery ───────────────────────────────────────────────
+
+# Hardcoded fallback models (used when no config.yaml or agent is available)
+_FALLBACK_MODELS = [
+    {'provider': 'OpenAI',    'id': 'openai/gpt-5.4-mini',              'label': 'GPT-5.4 Mini'},
+    {'provider': 'OpenAI',    'id': 'openai/gpt-4o',                    'label': 'GPT-4o'},
+    {'provider': 'OpenAI',    'id': 'openai/o3',                        'label': 'o3'},
+    {'provider': 'OpenAI',    'id': 'openai/o4-mini',                   'label': 'o4-mini'},
+    {'provider': 'Anthropic', 'id': 'anthropic/claude-sonnet-4.6',      'label': 'Claude Sonnet 4.6'},
+    {'provider': 'Anthropic', 'id': 'anthropic/claude-sonnet-4-5',      'label': 'Claude Sonnet 4.5'},
+    {'provider': 'Anthropic', 'id': 'anthropic/claude-haiku-3-5',       'label': 'Claude Haiku 3.5'},
+    {'provider': 'Other',     'id': 'google/gemini-2.5-pro',            'label': 'Gemini 2.5 Pro'},
+    {'provider': 'Other',     'id': 'deepseek/deepseek-chat-v3-0324',   'label': 'DeepSeek V3'},
+    {'provider': 'Other',     'id': 'meta-llama/llama-4-scout',         'label': 'Llama 4 Scout'},
+]
+
+# Provider display names for known Hermes provider IDs
+_PROVIDER_DISPLAY = {
+    'nous': 'Nous Portal', 'openrouter': 'OpenRouter', 'anthropic': 'Anthropic',
+    'openai': 'OpenAI', 'openai-codex': 'OpenAI Codex', 'copilot': 'GitHub Copilot',
+    'zai': 'Z.AI / GLM', 'kimi-coding': 'Kimi / Moonshot', 'deepseek': 'DeepSeek',
+    'minimax': 'MiniMax', 'google': 'Google', 'meta-llama': 'Meta Llama',
+    'huggingface': 'HuggingFace', 'alibaba': 'Alibaba',
+}
+
+# Well-known models per provider (used to populate dropdown for direct API providers)
+_PROVIDER_MODELS = {
+    'anthropic': [
+        {'id': 'claude-opus-4.6',    'label': 'Claude Opus 4.6'},
+        {'id': 'claude-sonnet-4.6',  'label': 'Claude Sonnet 4.6'},
+        {'id': 'claude-sonnet-4-5',  'label': 'Claude Sonnet 4.5'},
+        {'id': 'claude-haiku-3-5',   'label': 'Claude Haiku 3.5'},
+    ],
+    'openai': [
+        {'id': 'gpt-5.4-mini', 'label': 'GPT-5.4 Mini'},
+        {'id': 'gpt-4o',       'label': 'GPT-4o'},
+        {'id': 'o3',           'label': 'o3'},
+        {'id': 'o4-mini',      'label': 'o4-mini'},
+    ],
+    'openai-codex': [
+        {'id': 'codex-mini-latest', 'label': 'Codex Mini'},
+    ],
+    'google': [
+        {'id': 'gemini-2.5-pro', 'label': 'Gemini 2.5 Pro'},
+    ],
+    'deepseek': [
+        {'id': 'deepseek-chat-v3-0324', 'label': 'DeepSeek V3'},
+        {'id': 'deepseek-reasoner',     'label': 'DeepSeek Reasoner'},
+    ],
+    'nous': [
+        {'id': 'claude-opus-4.6',    'label': 'Claude Opus 4.6 (via Nous)'},
+        {'id': 'claude-sonnet-4.6',  'label': 'Claude Sonnet 4.6 (via Nous)'},
+        {'id': 'gpt-5.4-mini',      'label': 'GPT-5.4 Mini (via Nous)'},
+        {'id': 'gemini-2.5-pro',    'label': 'Gemini 2.5 Pro (via Nous)'},
+    ],
+    'zai': [
+        {'id': 'glm-4-plus',         'label': 'GLM-4 Plus'},
+        {'id': 'glm-4-air',          'label': 'GLM-4 Air'},
+        {'id': 'glm-z1-flash',       'label': 'GLM-Z1 Flash'},
+    ],
+    'kimi-coding': [
+        {'id': 'moonshot-v1-8k',     'label': 'Moonshot v1 8k'},
+        {'id': 'moonshot-v1-32k',    'label': 'Moonshot v1 32k'},
+        {'id': 'moonshot-v1-128k',   'label': 'Moonshot v1 128k'},
+        {'id': 'kimi-latest',        'label': 'Kimi Latest'},
+    ],
+    'minimax': [
+        {'id': 'abab6.5s-chat',      'label': 'MiniMax ABAB 6.5S'},
+        {'id': 'abab6.5g-chat',      'label': 'MiniMax ABAB 6.5G'},
+    ],
+}
+
+
+def get_available_models() -> dict:
+    """
+    Return available models grouped by provider.
+
+    Discovery order:
+      1. Read config.yaml 'model' section for active provider info
+      2. Check for known API keys in env or ~/.hermes/.env
+      3. Fall back to hardcoded model list (OpenRouter-style)
+
+    Returns: {
+        'active_provider': str|None,
+        'default_model': str,
+        'groups': [{'provider': str, 'models': [{'id': str, 'label': str}]}]
+    }
+    """
+    active_provider = None
+    default_model = DEFAULT_MODEL
+    groups = []
+
+    # 1. Read config.yaml model section
+    model_cfg = cfg.get('model', {})
+    if isinstance(model_cfg, str):
+        default_model = model_cfg
+    elif isinstance(model_cfg, dict):
+        active_provider = model_cfg.get('provider')
+        cfg_default = model_cfg.get('default', '')
+        if cfg_default:
+            default_model = cfg_default
+
+    # 2. Also check env vars for model override
+    env_model = os.getenv('HERMES_MODEL') or os.getenv('OPENAI_MODEL') or os.getenv('LLM_MODEL')
+    if env_model:
+        default_model = env_model.strip()
+
+    # 3. Try to read auth store for active provider (if hermes is installed)
+    if not active_provider:
+        auth_store_path = HOME / '.hermes' / 'auth.json'
+        if auth_store_path.exists():
+            try:
+                import json as _j
+                auth_store = _j.loads(auth_store_path.read_text())
+                active_provider = auth_store.get('active_provider')
+            except Exception:
+                pass
+
+    # 4. Check for API keys that imply available providers
+    hermes_env_path = HOME / '.hermes' / '.env'
+    env_keys = {}
+    if hermes_env_path.exists():
+        try:
+            for line in hermes_env_path.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    env_keys[k.strip()] = v.strip().strip('"').strip("'")
+        except Exception:
+            pass
+
+    # Merge with actual env
+    all_env = {**env_keys}
+    for k in ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
+              'GOOGLE_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY', 'DEEPSEEK_API_KEY'):
+        val = os.getenv(k)
+        if val:
+            all_env[k] = val
+
+    detected_providers = set()
+    if active_provider:
+        detected_providers.add(active_provider)
+    if all_env.get('ANTHROPIC_API_KEY'):
+        detected_providers.add('anthropic')
+    if all_env.get('OPENAI_API_KEY'):
+        detected_providers.add('openai')
+    if all_env.get('OPENROUTER_API_KEY'):
+        detected_providers.add('openrouter')
+    if all_env.get('GOOGLE_API_KEY'):
+        detected_providers.add('google')
+    if all_env.get('GLM_API_KEY'):
+        detected_providers.add('zai')
+    if all_env.get('KIMI_API_KEY'):
+        detected_providers.add('kimi-coding')
+    if all_env.get('MINIMAX_API_KEY') or all_env.get('MINIMAX_CN_API_KEY'):
+        detected_providers.add('minimax')
+    if all_env.get('DEEPSEEK_API_KEY'):
+        detected_providers.add('deepseek')
+
+    # 5. Build model groups
+    if detected_providers:
+        for pid in sorted(detected_providers):
+            provider_name = _PROVIDER_DISPLAY.get(pid, pid.title())
+            if pid == 'openrouter':
+                # OpenRouter uses provider/model format -- show the fallback list
+                groups.append({
+                    'provider': 'OpenRouter',
+                    'models': [{'id': m['id'], 'label': m['label']} for m in _FALLBACK_MODELS],
+                })
+            elif pid in _PROVIDER_MODELS:
+                groups.append({
+                    'provider': provider_name,
+                    'models': _PROVIDER_MODELS[pid],
+                })
+            else:
+                # Unknown provider with key -- add a placeholder with the default model
+                groups.append({
+                    'provider': provider_name,
+                    'models': [{'id': default_model, 'label': default_model.split('/')[-1]}],
+                })
+    else:
+        # No providers detected -- use fallback grouped list
+        by_provider = {}
+        for m in _FALLBACK_MODELS:
+            by_provider.setdefault(m['provider'], []).append(
+                {'id': m['id'], 'label': m['label']}
+            )
+        for provider_name, models in by_provider.items():
+            groups.append({'provider': provider_name, 'models': models})
+
+    return {
+        'active_provider': active_provider,
+        'default_model': default_model,
+        'groups': groups,
+    }
+
+
 # ── Static file path ─────────────────────────────────────────────────────────
 _INDEX_HTML_PATH = REPO_ROOT / 'static' / 'index.html'
 
@@ -268,6 +466,53 @@ def _get_session_agent_lock(session_id: str) -> threading.Lock:
         if session_id not in SESSION_AGENT_LOCKS:
             SESSION_AGENT_LOCKS[session_id] = threading.Lock()
         return SESSION_AGENT_LOCKS[session_id]
+
+# ── Settings persistence ─────────────────────────────────────────────────────
+
+_SETTINGS_DEFAULTS = {
+    'default_model': DEFAULT_MODEL,
+    'default_workspace': str(DEFAULT_WORKSPACE),
+}
+
+def load_settings() -> dict:
+    """Load settings from disk, merging with defaults for any missing keys."""
+    settings = dict(_SETTINGS_DEFAULTS)
+    if SETTINGS_FILE.exists():
+        try:
+            stored = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+            if isinstance(stored, dict):
+                settings.update(stored)
+        except Exception:
+            pass
+    return settings
+
+_SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys())
+
+def save_settings(settings: dict) -> dict:
+    """Save settings to disk. Returns the merged settings. Ignores unknown keys."""
+    current = load_settings()
+    for k, v in settings.items():
+        if k in _SETTINGS_ALLOWED_KEYS:
+            current[k] = v
+    SETTINGS_FILE.write_text(
+        json.dumps(current, ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+    # Update runtime defaults so new sessions use them immediately
+    global DEFAULT_MODEL, DEFAULT_WORKSPACE
+    if 'default_model' in current:
+        DEFAULT_MODEL = current['default_model']
+    if 'default_workspace' in current:
+        DEFAULT_WORKSPACE = Path(current['default_workspace']).expanduser().resolve()
+    return current
+
+# Apply saved settings on startup (override env-derived defaults)
+_startup_settings = load_settings()
+if SETTINGS_FILE.exists():
+    if _startup_settings.get('default_model'):
+        DEFAULT_MODEL = _startup_settings['default_model']
+    if _startup_settings.get('default_workspace'):
+        DEFAULT_WORKSPACE = Path(_startup_settings['default_workspace']).expanduser().resolve()
 
 # ── SESSIONS in-memory cache (LRU OrderedDict) ───────────────────────────────
 SESSIONS: collections.OrderedDict = collections.OrderedDict()

@@ -448,3 +448,53 @@ body.resizing{user-select:none;cursor:col-resize;}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px;}
 ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.22);}
 * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.12) transparent; }
+
+/* ── Settings overlay ── */
+.settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;}
+.settings-panel{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:0;width:380px;max-width:90vw;max-height:80vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.5);}
+.settings-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;border-bottom:1px solid var(--border);}
+.settings-body{padding:20px;}
+.settings-field{margin-bottom:16px;}
+.settings-field label{display:block;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+/* Save button inside the settings panel */
+.settings-panel .settings-btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:600;font-size:13px;}
+.settings-panel .settings-btn:hover{opacity:.9;}
+/* Gear icon in topbar -- muted chip, no red */
+.gear-btn{font-size:13px;cursor:pointer;transition:color .15s,background .15s;}
+.gear-btn:hover{color:var(--text);background:rgba(255,255,255,.08);}
+
+/* ── Session pin star ── */
+.session-pin{font-size:12px;cursor:pointer;opacity:0;transition:opacity .15s;padding:2px 4px;flex-shrink:0;}
+.session-item:hover .session-pin,.session-pin.pinned{opacity:1;}
+.session-pin.pinned{color:#f5c542;}
+
+/* ── Session duplicate button ── */
+.session-dup,.session-action-btn{background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;opacity:0;transition:opacity .15s;padding:2px 4px;flex-shrink:0;}
+.session-item:hover .session-dup,.session-item:hover .session-action-btn{opacity:1;}
+.session-dup:hover,.session-action-btn:hover{color:var(--text);}
+
+/* ── Cron alert badge ── */
+.cron-badge{position:absolute;top:2px;right:2px;background:#e53e3e;color:#fff;font-size:9px;font-weight:700;min-width:14px;height:14px;line-height:14px;text-align:center;border-radius:7px;padding:0 3px;}
+
+/* ── Background error banner ── */
+/* ── Archived sessions ── */
+.session-item.archived{opacity:.5;}
+.session-item.archived .session-title{font-style:italic;}
+
+/* ── Session tags ── */
+.session-tag{display:inline-block;font-size:9px;font-weight:600;padding:1px 5px;margin-left:4px;border-radius:3px;background:rgba(99,179,237,.2);color:#63b3ed;cursor:pointer;vertical-align:middle;}
+.session-tag:hover{background:rgba(99,179,237,.35);}
+
+/* ── File rename input ── */
+.file-rename-input{background:rgba(255,255,255,.08);border:1px solid var(--accent);border-radius:4px;color:var(--text);font-size:12px;padding:1px 4px;width:100%;outline:none;min-width:0;}
+
+/* ── Message timestamps ── */
+.msg-time{font-size:10px;color:var(--muted);opacity:.6;margin-left:6px;}
+.msg-role:hover .msg-time{opacity:1;}
+
+/* ── Mermaid diagrams ── */
+.mermaid-block{background:var(--code-bg);border-radius:8px;padding:16px;margin:8px 0;overflow-x:auto;}
+.mermaid-rendered{background:transparent;padding:8px 0;}
+.mermaid-rendered svg{max-width:100%;height:auto;}
+
+.bg-error-banner{background:rgba(229,62,62,.15);border:1px solid rgba(229,62,62,.3);color:#fca5a5;padding:8px 16px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-radius:0;}

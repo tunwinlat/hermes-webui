@@ -1,6 +1,6 @@
-# Hermes WebUI -- Forward Sprint Plan
+# Hermes Web UI -- Forward Sprint Plan
 
-> Current state: v0.1.0 | 190 tests | Daily driver ready
+> Current state: v0.15 | 221 tests | Daily driver ready
 > This document plans the path from here to two targets:
 >
 > Target A: 1:1 feature parity with the Hermes CLI (everything you can do from the
@@ -14,7 +14,7 @@
 
 ---
 
-## Where we are now (v0.1.0)
+## Where we are now (v0.12.1)
 
 **CLI parity: ~80% complete.** Core agent loop, all tools visible, workspace
 file ops, cron/skills/memory CRUD, session management, streaming, cancel --
@@ -26,14 +26,18 @@ present. Gaps are project organization, artifacts, voice, sharing, mobile.
 
 ---
 
-## Sprint 11 -- Streaming Smoothness + Tool Card Incremental Render
+## Sprint 11 -- Multi-Provider Models + Streaming Smoothness (COMPLETED)
 
-**Theme:** Make heavy agentic work feel fast and fluid.
+**Theme:** Use any Hermes-supported model provider from the UI, and make
+heavy agentic work feel fast and fluid.
 
-**Why now:** The biggest remaining daily friction point. During a 20-step task,
-every tool event triggers a full renderMessages() re-render of the entire
-message list. On fast tasks you can see flicker. This is the last thing that
-makes the UI feel noticeably worse than watching the CLI.
+**Why now:** Two high-impact gaps converge here. First, the model dropdown is
+hardcoded to ~10 OpenRouter model strings. If Hermes is configured with direct
+Anthropic, OpenAI, Google, or other API providers, the web UI can't use them.
+This means users who set up Hermes with native API keys are locked out of
+their own models in the browser. Second, the streaming render path rebuilds
+the entire message list on every tool event, causing visible flicker during
+heavy agentic work.
 
 ### Track A: Bugs
 - Tool card DOM thrash: renderMessages() rebuilds all cards on each tool event.
@@ -41,13 +45,16 @@ makes the UI feel noticeably worse than watching the CLI.
 - Scroll position lost on re-render during streaming (messages jump).
 
 ### Track B: Features
+- **Multi-provider model support:** Query Hermes agent's configured providers
+  and available models at startup via a new `GET /api/models` endpoint. The
+  model dropdown populates dynamically from whatever providers the user has
+  configured (OpenRouter, direct OpenAI, direct Anthropic, Google, DeepSeek,
+  etc.). Group by provider. Fall back to the current hardcoded list if the
+  agent query fails. This ensures the web UI can use any model the CLI can.
 - **Incremental tool card streaming:** Instead of renderMessages() on each
   tool event, maintain a live card group element per turn and append/update
   cards in place. The assistant text row below the cards also updates
   incrementally (already does via assistantBody.innerHTML).
-- **Tool card collapse-all / expand-all:** A small toggle in the topbar or
-  per-message to collapse all tool cards in a response. Useful when a response
-  has 10+ tool calls.
 - **Smooth scroll:** Pin scroll to bottom during streaming unless user has
   manually scrolled up (read-back mode). Resume pinning when user scrolls
   back to bottom.
@@ -58,86 +65,123 @@ makes the UI feel noticeably worse than watching the CLI.
   ~50-line shell: imports, Handler stub that delegates to routes, main().
   Completes the server split started in Sprint 10.
 
-**Tests:** ~12 new. Total: ~196.
-**Hermes CLI parity impact:** Low (smoothness, not features)
-**Claude parity impact:** Low
+**Tests:** ~15 new. Total: ~205.
+**Hermes CLI parity impact:** High (model provider parity is a major CLI gap)
+**Claude parity impact:** Low (streaming smoothness)
 
 ---
 
-## Sprint 12 -- Settings Panel + Toolset Control
+## Sprint 12 -- Settings Panel + Reliability + Session QoL
 
-**Theme:** Configuration you can actually reach from the UI.
+**Theme:** Persist your preferences, survive network blips, and organize sessions.
 
-**Why now:** Last remaining thing that forces a trip to the CLI or config files
-for basic setup. The model dropdown works but defaults aren't persisted
-server-side. Toolsets can't be toggled per session.
+**Why now:** Three daily-driver friction points converge. First, default model
+and workspace aren't persisted server-side -- every restart loses them. Second,
+SSH tunnel hiccups during long agent runs silently kill the response with no
+recovery. Third, after 50+ sessions the flat chronological list makes it hard
+to keep important conversations accessible.
 
 ### Track A: Bugs
-- Model dropdown doesn't sync when a session was created with a model not in
-  the current dropdown list (edge case from model additions).
 - Workspace validation on add doesn't check symlinks (shows as invalid when
   it's actually a valid symlink to a directory).
 
 ### Track B: Features
 - **Settings panel:** A gear icon in the topbar opens a slide-in settings panel.
-  Sections: Default Model (writes HERMES_WEBUI_DEFAULT_MODEL to a settings file),
-  Default Workspace (writes HERMES_WEBUI_DEFAULT_WORKSPACE), UI preferences
-  (font size, message density). Persisted server-side in `~/.hermes/webui-mvp/settings.json`.
-- **Toolset control per session:** A "Tools" chip in the session topbar opens
-  a popover listing all available toolsets (terminal, web, file, memory, etc.)
-  with toggles. Selected toolsets stored on the session and passed to AIAgent.
-  Matches the `--tools` flag behavior in the CLI.
-- **Rename file / Create folder:** Two small file tree ops that close the last
-  workspace management gap. Inline rename on double-click (same pattern as
-  session rename). Create folder via + menu next to the existing + file button.
+  Sections: Default Model, Default Workspace. Persisted server-side in
+  `~/.hermes/webui-mvp/settings.json`. Server reads settings on startup and
+  uses them as defaults. `GET /api/settings` + `POST /api/settings` endpoints.
+- **SSE auto-reconnect:** When the EventSource connection drops mid-stream
+  (network blip, SSH tunnel hiccup), auto-reconnect once using the same
+  `stream_id`. The server-side queue holds undelivered events. If reconnect
+  fails after 5s, show error banner. This is the #1 reliability gap for
+  remote VPS usage.
+- **Pin sessions:** A star icon on any session in the sidebar. Pinned sessions
+  float to the top of the list above date groups. Persisted on the session
+  JSON as `pinned: true`. Toggle on click. Simple and high quality-of-life.
+- **Import session from JSON:** Drag a `.json` export file into the sidebar
+  (or click an import button) to restore it as a new session. Mirrors the
+  existing JSON export. Useful for moving sessions between machines.
 
 ### Track C: Architecture
 - Settings schema: `settings.json` with typed fields, validated on load, with
   sane defaults. Served via `GET /api/settings`, written via `POST /api/settings`.
+- SSE reconnect: server keeps `STREAMS[stream_id]` alive for 60s after
+  client disconnect, allowing reconnect with the same stream_id.
 
-**Tests:** ~15 new. Total: ~211.
-**Hermes CLI parity impact:** High (toolset control is the last major CLI feature)
-**Claude parity impact:** Medium (settings exist in Claude as a panel)
+**Tests:** ~15 new. Total: ~216.
+**Hermes CLI parity impact:** Medium (settings persistence, reliability)
+**Claude parity impact:** Medium (settings panel, pinned conversations)
 
 ---
 
-## Sprint 13 -- Notification System + Background Visibility
+## Sprint 13 -- Alerts, Session QoL, Polish
 
-**Theme:** Know what Hermes is doing even when you're not watching.
+**Theme:** Know what Hermes is doing, and small quality-of-life wins.
 
 **Why now:** Cron jobs run silently. Background errors surface nowhere. You have
 no way to know a long-running task finished (or failed) while you were on another
-tab. This is a meaningful daily driver gap for anyone using cron heavily.
+tab. Meanwhile, a few small UX gaps (no session duplicate, no tab title) add up
+to daily friction.
 
 ### Track A: Bugs
-- Cron "Run now" button shows no feedback if the job errors immediately.
-- Sessions with very long message histories (100+ messages) cause noticeable
-  render lag on load (no virtual scroll yet).
+- Symlink workspace validation — confirmed already fixed (`.resolve()` follows
+  symlinks before `is_dir()` check).
 
 ### Track B: Features
-- **Cron completion alerts:** When a cron job finishes (success or error), push
-  a toast notification to the UI. Use a polling endpoint (`GET /api/crons/status`)
-  that the UI checks every 30s while the window is focused. Badge count on the
-  Tasks tab icon when there are unread completions.
-- **Background agent error alerts:** When a streaming session errors out (network
-  drop, model error, tool failure), and the user is not currently viewing that
-  session, show a persistent banner: "Session X encountered an error." Clicking
-  it navigates to that session.
-- **Virtual scroll for session list:** Session list currently renders all sessions
-  in the DOM. Above ~100 sessions, the sidebar gets slow. Implement simple virtual
-  scroll: render only ~20 visible rows, reuse DOM nodes on scroll.
+- **Cron completion alerts:** `GET /api/crons/recent?since=TIMESTAMP` endpoint.
+  UI polls every 30s (only when tab is focused). Toast notification on each
+  completion. Red badge count on Tasks nav tab, cleared when tab is opened.
+- **Background agent error alerts:** When a streaming session errors out and
+  the user is on a different session, show a persistent red banner above the
+  message area: "Session X encountered an error." Click "View" to navigate,
+  "Dismiss" to clear.
+- **Session duplicate:** Copy icon on each session in the sidebar (visible on
+  hover). Creates a new session with same workspace/model, titled "(copy)".
+- **Browser tab title:** `document.title` updates to show the active session
+  title (e.g. "My Task — Hermes"). Resets to "Hermes" when no session active.
 
-### Track C: Architecture
-- SSE reconnect: if the SSE connection drops mid-stream, auto-reconnect once
-  (with the same stream_id). Currently a network blip ends the response silently.
-
-**Tests:** ~14 new. Total: ~225.
-**Hermes CLI parity impact:** High (cron visibility, error surfacing)
-**Claude parity impact:** Medium (Claude has notification panel)
+**Tests:** ~10 new. Total: ~221.
+**Hermes CLI parity impact:** Medium (cron visibility, error surfacing)
+**Claude parity impact:** Low
 
 ---
 
-## Sprint 14 -- Project Organization + Session Management
+## Sprint 14 -- Visual Polish + Workspace Ops + Session Organization
+
+**Theme:** Polish the visual experience, close workspace file gaps, and
+organize sessions properly.
+
+### Track B: Features
+- **Mermaid diagram rendering:** Code blocks tagged `mermaid` render as
+  diagrams inline. Mermaid.js loaded lazily from CDN. Dark theme. Falls
+  back to code block on parse error.
+- **Message timestamps:** Subtle HH:MM time next to each role label. Full
+  date/time on hover. User messages tagged with `_ts` on send.
+- **Date grouping fix:** Session list uses `created_at` for groups instead
+  of `updated_at`. Prevents sessions jumping between groups on auto-title.
+- **File rename:** Double-click any filename in the workspace panel to
+  rename inline (same pattern as session rename). `POST /api/file/rename`.
+- **Folder create:** Folder icon button in workspace panel header.
+  `POST /api/file/create-dir`. Prompt for folder name.
+- **Session tags:** Add `#tag` to session titles. Tags extracted and shown
+  as colored chips in the sidebar. Click a tag to filter the session list.
+- **Session archive:** Archive button on each session (box icon). Archived
+  sessions hidden from sidebar by default. "Show N archived" toggle at top
+  of list. `POST /api/session/archive` endpoint.
+
+### Candidates for next sprints
+- Workspace reorder (drag-and-drop)
+- View skill linked files
+- Voice input via Whisper
+- Subagent delegation cards (enhanced tool card rendering)
+
+**Tests:** ~12 new. Total: ~233.
+**Hermes CLI parity impact:** Medium (file rename, folder create)
+**Claude parity impact:** Medium (Mermaid, tags, archive)
+
+---
+
+## Sprint 15 -- Project Organization + Session Management
 
 **Theme:** Organize work the way you think, not just chronologically.
 
@@ -158,21 +202,19 @@ daily organizational gap vs. Claude's project folders.
   Each project is a named group. Sessions can be dragged into projects or
   assigned via right-click. Stored in `projects.json`. Projects collapse/expand.
   This is the single biggest Claude parity feature missing.
-- **Pin sessions:** Star icon on any session to pin it to the top of the list
-  above date groups. Persisted on the session JSON as `pinned: true`.
-- **Session tags:** Inline `#tag` syntax in session titles gets extracted and
-  shown as colored chips. Clicking a tag filters the list. No backend change
-  needed -- parsed client-side from title text.
-- **Archive sessions:** A "More" overflow menu on each session (right-click or
-  long-press) with: Archive (hides from main list, accessible via filter),
-  Duplicate (new session with same workspace/model), Export JSON.
-- **Import session from JSON:** Drag a `.json` export file into the sidebar to
-  restore it as a new session. Mirrors the existing JSON export.
+- ~~Pin sessions~~ (DONE Sprint 12)
+- ~~Import session from JSON~~ (DONE Sprint 12)
+
+### Deferred to later sprints
+- Session tags / labels
+- Archive sessions
+- Rename file / Create folder (can be done through the agent)
+- Toolset control per session
+- Virtual scroll for session list
 
 ### Track C: Architecture
-- Session index v2: extend `_index.json` to include `tags`, `pinned`, and
-  `project_id` fields. Rebuild on session save. Enables fast client-side
-  filtering without disk reads.
+- Session index v2: extend `_index.json` to include `project_id` field.
+  Rebuild on session save. Enables fast client-side filtering without disk reads.
 
 **Tests:** ~16 new. Total: ~241.
 **Hermes CLI parity impact:** Low (CLI has no session organization)
@@ -344,7 +386,7 @@ address.
 |-------------|--------|
 | Chat / agent loop | Done (v0.3) |
 | Streaming responses | Done (v0.5) |
-| Tool call visibility | Done (v0.0.7) |
+| Tool call visibility | Done (v0.11) |
 | File ops (read/write/search/patch) | Done (v0.6) |
 | Terminal commands | Done via workspace |
 | Cron job management | Done (v0.9) |
@@ -353,6 +395,7 @@ address.
 | Session history | Done (v0.3) |
 | Workspace switching | Done (v0.7) |
 | Model selection | Done (v0.3) |
+| Multi-provider model support | Sprint 11 |
 | Toolset control | Sprint 12 |
 | Settings persistence | Sprint 12 |
 | Subagent visibility | Sprint 17 |
@@ -369,9 +412,9 @@ address.
 | Streaming chat | Done (v0.5) |
 | Model switching | Done (v0.3) |
 | File attachments | Done (v0.6) |
-| Syntax highlighting | Done (v0.0.6) |
-| Tool use visibility | Done (v0.0.7) |
-| Edit/regenerate messages | Done (v0.0.6) |
+| Syntax highlighting | Done (v0.10) |
+| Tool use visibility | Done (v0.11) |
+| Edit/regenerate messages | Done (v0.10) |
 | Session management | Done (v0.6) |
 | Artifacts (HTML/SVG preview) | Sprint 15 |
 | Code execution inline | Sprint 15 |
@@ -402,6 +445,6 @@ address.
 
 ---
 
-*Last updated: March 31, 2026*
-*Current version: v0.1.0 | 190 tests*
-*Next sprint: Sprint 11 (streaming smoothness + api/routes.py split)*
+*Last updated: March 30, 2026*
+*Current version: v0.13 | 201 tests*
+*Next sprint: Sprint 14 (visual polish + small QoL)*

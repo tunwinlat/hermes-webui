@@ -1,5 +1,5 @@
 """
-Sprint 1 test suite for the Hermes WebUI.
+Sprint 1 test suite for the Hermes Web UI.
 
 Tests use the ISOLATED test server running on http://127.0.0.1:8788.
 Production server (port 8787) and your real conversations are never touched.

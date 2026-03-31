@@ -1,4 +1,4 @@
-# Hermes WebUI -- Changelog
+# Hermes Web UI -- Changelog
 
 > Living document. Updated at the end of every sprint.
 > Source: <repo>/
@@ -6,7 +6,103 @@
 
 ---
 
-## [v0.1.0] Concurrency + Correctness Sweeps
+## [v0.16] Sprint 14 -- Visual Polish + Workspace Ops + Session Organization
+*March 30, 2026 | 233 tests*
+
+### Features
+- **Mermaid diagram rendering.** Code blocks tagged `mermaid` render as
+  diagrams inline. Mermaid.js loaded lazily from CDN on first encounter.
+  Dark theme with matching colors. Falls back to code block on parse error.
+- **Message timestamps.** Subtle HH:MM time next to each role label. Full
+  date/time on hover tooltip. User messages get `_ts` field when sent.
+- **File rename.** Double-click any filename in workspace panel to rename
+  inline. `POST /api/file/rename` endpoint with path traversal protection.
+- **Folder create.** Folder icon button in workspace panel header. Prompt
+  for name, `POST /api/file/create-dir` endpoint.
+- **Session tags.** Add `#tag` to session titles. Tags shown as colored
+  chips in sidebar. Click a tag to filter the session list.
+- **Session archive.** Archive icon on each session. Archived sessions
+  hidden by default; "Show N archived" toggle at top of list. Backend
+  `POST /api/session/archive` with `archived` field on Session model.
+
+### Bug Fixes
+- **Date grouping fix.** Session list groups (Today/Yesterday/Earlier) now
+  use `created_at` instead of `updated_at`, preventing sessions from jumping
+  between groups when auto-titling touches `updated_at`.
+
+---
+
+## [v0.15] Sprint 13 -- Alerts + Session QoL + Polish
+*March 30, 2026 | 221 tests*
+
+### Features
+- **Cron completion alerts.** New `GET /api/crons/recent` endpoint. UI polls every
+  30s (pauses when tab is hidden). Toast notification per completion with status icon.
+  Red badge count on Tasks nav tab, cleared when tab is opened.
+- **Background agent error alerts.** When a streaming session errors out and the user
+  is viewing a different session, a persistent red banner appears above the messages:
+  "Session X has encountered an error." View button navigates, Dismiss clears.
+- **Session duplicate.** Copy icon on each session in the sidebar (visible on hover).
+  Creates a new session with the same workspace and model, titled "(copy)".
+- **Browser tab title.** `document.title` updates to show the active session title
+  (e.g. "My Task -- Hermes"). Resets to "Hermes" when no session is active.
+
+### Bug Fixes
+- Click guard added for duplicate button to prevent accidental session navigation.
+
+---
+
+## [v0.14] Sprint 12 -- Settings Panel + Reliability + Session QoL
+*March 30, 2026 | 211 tests*
+
+### Features
+- **Settings panel.** Gear icon in topbar opens slide-in overlay. Persist default
+  model and workspace server-side in `settings.json`. Server reads on startup.
+- **SSE auto-reconnect.** When EventSource drops mid-stream, attempts one reconnect
+  using the same stream_id after 1.5s. Shared `_wireSSE()` function eliminates
+  handler duplication.
+- **Pin sessions.** Star icon on each session. Pinned sessions float to top of sidebar
+  under a gold "Pinned" header. Persisted in session JSON.
+- **Import session from JSON.** Upload button in sidebar. Creates new session with
+  fresh ID from exported JSON file.
+
+### Bug Fixes
+- `models.py` uses `_cfg.DEFAULT_MODEL` module reference so `save_settings()` changes
+  take effect for `new_session()`.
+- Full-scan fallback sort in `all_sessions()` now accounts for pinned sessions.
+- `save_settings()` whitelists known keys only, rejecting arbitrary data.
+- Escape key closes settings overlay.
+
+---
+
+## [v0.13] Sprint 11 -- Multi-Provider Models + Streaming Smoothness
+*March 30, 2026 | 201 tests*
+
+### Features
+- **Multi-provider model support.** New `GET /api/models` endpoint discovers configured
+  providers from `config.yaml`, `auth.json`, and API key environment variables. The model
+  dropdown now populates dynamically from whatever providers the user has set up (Anthropic,
+  OpenAI, Google, DeepSeek, Nous Portal, OpenRouter, etc.). Falls back to the hardcoded
+  OpenRouter list when no providers are detected. Sessions with unlisted models auto-add
+  them to the dropdown.
+- **Smooth scroll pinning.** During streaming, auto-scroll only when the user is near the
+  bottom of the message area. If the user scrolls up to read earlier content, new tokens
+  no longer yank them back down. Pinning resumes when they scroll back to the bottom.
+
+### Architecture
+- **Routes extracted to api/routes.py.** All 49 GET/POST route handlers moved from server.py
+  into `api/routes.py` (802 lines). server.py is now a 76-line thin shell: Handler class
+  with structured logging, dispatch to `handle_get()`/`handle_post()`, and `main()`.
+  Completes the server split started in Sprint 10.
+- **Cleaned up duplicate dead-code routes** that existed in the old `do_GET` (skills/save,
+  skills/delete, memory/write were duplicated in both GET and POST handlers).
+
+### Bug Fixes
+- Regression tests updated for new route module structure.
+
+---
+
+## [v0.12.2] Concurrency + Correctness Sweeps
 *March 31, 2026 | 190 tests*
 
 Two systematic audits of all concurrent multi-session scenarios. Each finding
@@ -38,7 +134,7 @@ became a regression test so it cannot silently return.
 
 ---
 
-## [v0.0.9] Sprint 10 Post-Release Fixes
+## [v0.12.1] Sprint 10 Post-Release Fixes
 *March 31, 2026 | 177 tests*
 
 Critical regressions introduced during the server.py split, caught by users and fixed immediately.
@@ -52,7 +148,7 @@ Critical regressions introduced during the server.py split, caught by users and 
 
 ---
 
-## [v0.0.8] Sprint 10 -- Server Health + Operational Polish
+## [v0.12] Sprint 10 -- Server Health + Operational Polish
 *March 31, 2026 | 167 tests*
 
 ### Post-sprint Bug Fixes
@@ -60,7 +156,7 @@ Critical regressions introduced during the server.py split, caught by users and 
 - `setBusy(false)` now always hides the Cancel button
 - `S.activeStreamId` properly initialized in the S global state object
 - Tool card "Show more" button uses data attributes instead of inline JSON.stringify (XSS/parse safety)
-- Version label updated to v0.0.8
+- Version label updated to v0.2
 - `Session.__init__` accepts `**kwargs` for forward-compatibility with future JSON fields
 - Test cron jobs now isolated via `HERMES_HOME` env var in conftest (no more pollution of real jobs.json)
 - `last_workspace` reset after each test in conftest (prevents workspace state bleed between tests)
@@ -89,7 +185,7 @@ Critical regressions introduced during the server.py split, caught by users and 
 
 ---
 
-## [v0.0.7] Sprint 9 -- Codebase Health + Daily Driver Gaps
+## [v0.11] Sprint 9 -- Codebase Health + Daily Driver Gaps
 *March 31, 2026 | 149 tests*
 
 The sprint that closed the last gaps for heavy agentic use.
@@ -121,7 +217,7 @@ The sprint that closed the last gaps for heavy agentic use.
 
 ---
 
-## [v0.0.6] Sprint 8 -- Daily Driver Finish Line
+## [v0.10] Sprint 8 -- Daily Driver Finish Line
 *March 31, 2026 | 139 tests*
 
 ### Features
@@ -139,7 +235,7 @@ The sprint that closed the last gaps for heavy agentic use.
 - Send button guard while inline edit is active
 - Escape closes dropdown, clears search, cancels active edit
 - Approval polling not restarted on INFLIGHT session switch-back
-- Version label updated to v0.0.6
+- Version label updated to v0.10
 
 ### Hotfix: Message Queue + INFLIGHT
 - **Message queue.** Sending while busy queues the message with toast + badge.
@@ -309,4 +405,4 @@ Three-panel layout: sessions sidebar, chat area, workspace panel.
 
 ---
 
-*Last updated: Sprint 9, March 31, 2026 | Tests: 149/149*
+*Last updated: Sprint 14, March 31, 2026 | Tests: 224/224*

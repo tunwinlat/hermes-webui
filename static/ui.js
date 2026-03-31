@@ -4,8 +4,88 @@ const MSG_QUEUE=[];  // messages queued while a request is in-flight
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// Dynamic model labels -- populated by populateModelDropdown(), fallback to static map
+let _dynamicModelLabels={};
+
+async function populateModelDropdown(){
+  const sel=$('modelSelect');
+  if(!sel) return;
+  try{
+    const data=await fetch('/api/models').then(r=>r.json());
+    if(!data.groups||!data.groups.length) return; // keep HTML defaults
+    // Clear existing options
+    sel.innerHTML='';
+    _dynamicModelLabels={};
+    for(const g of data.groups){
+      const og=document.createElement('optgroup');
+      og.label=g.provider;
+      for(const m of g.models){
+        const opt=document.createElement('option');
+        opt.value=m.id;
+        opt.textContent=m.label;
+        og.appendChild(opt);
+        _dynamicModelLabels[m.id]=m.label;
+      }
+      sel.appendChild(og);
+    }
+    // Set default model from server if no localStorage preference
+    if(data.default_model && !localStorage.getItem('hermes-webui-model')){
+      sel.value=data.default_model;
+      // If the default isn't in the list, add it
+      if(sel.value!==data.default_model){
+        const opt=document.createElement('option');
+        opt.value=data.default_model;
+        opt.textContent=data.default_model.split('/').pop();
+        sel.insertBefore(opt,sel.firstChild);
+        sel.value=data.default_model;
+      }
+    }
+  }catch(e){
+    // API unavailable -- keep the hardcoded HTML options as fallback
+    console.warn('Failed to load models from server:',e.message);
+  }
+}
+
+// ── Scroll pinning ──────────────────────────────────────────────────────────
+// When streaming, auto-scroll only if the user hasn't manually scrolled up.
+// Once the user scrolls back to within 80px of the bottom, re-pin.
+let _scrollPinned=true;
+(function(){
+  const el=document.getElementById('messages');
+  if(!el) return;
+  el.addEventListener('scroll',()=>{
+    const nearBottom=el.scrollHeight-el.scrollTop-el.clientHeight<80;
+    _scrollPinned=nearBottom;
+  });
+})();
+function scrollIfPinned(){
+  if(!_scrollPinned) return;
+  const el=$('messages');
+  if(el) el.scrollTop=el.scrollHeight;
+}
+function scrollToBottom(){
+  _scrollPinned=true;
+  const el=$('messages');
+  if(el) el.scrollTop=el.scrollHeight;
+}
+
+function getModelLabel(modelId){
+  if(!modelId) return 'Unknown';
+  // Check dynamic labels first, then fall back to splitting the ID
+  if(_dynamicModelLabels[modelId]) return _dynamicModelLabels[modelId];
+  // Static fallback for common models
+  const STATIC_LABELS={'openai/gpt-5.4-mini':'GPT-5.4 Mini','openai/gpt-4o':'GPT-4o','openai/o3':'o3','openai/o4-mini':'o4-mini','anthropic/claude-sonnet-4.6':'Sonnet 4.6','anthropic/claude-sonnet-4-5':'Sonnet 4.5','anthropic/claude-haiku-3-5':'Haiku 3.5','google/gemini-2.5-pro':'Gemini 2.5 Pro','deepseek/deepseek-chat-v3-0324':'DeepSeek V3','meta-llama/llama-4-scout':'Llama 4 Scout'};
+  if(STATIC_LABELS[modelId]) return STATIC_LABELS[modelId];
+  return modelId.split('/').pop()||'Unknown';
+}
+
 function renderMd(raw){
   let s=raw||'';
+  // Mermaid blocks: render as diagram containers (processed after DOM insertion)
+  s=s.replace(/```mermaid\n?([\s\S]*?)```/g,(_,code)=>{
+    const id='mermaid-'+Math.random().toString(36).slice(2,10);
+    return `<div class="mermaid-block" data-mermaid-id="${id}">${esc(code.trim())}</div>`;
+  });
   s=s.replace(/```([\w+-]*)\n?([\s\S]*?)```/g,(_,lang,code)=>{const h=lang?`<div class="pre-header">${esc(lang)}</div>`:'';return `${h}<pre><code>${esc(code.replace(/\n$/,''))}</code></pre>`;});
   s=s.replace(/`([^`\n]+)`/g,(_,c)=>`<code>${esc(c)}</code>`);
   s=s.replace(/\*\*\*(.+?)\*\*\*/g,'<strong><em>$1</em></strong>');
@@ -174,6 +254,7 @@ async function checkInflightOnBoot(sid) {
 
 function syncTopbar(){
   if(!S.session){
+    document.title='Hermes';
     // Show default workspace name even without a session
     const sidebarName=$('sidebarWsName');
     if(sidebarName && sidebarName.textContent==='Workspace'){
@@ -181,17 +262,26 @@ function syncTopbar(){
     }
     return;
   }
-  $('topbarTitle').textContent=S.session.title||'Untitled';
+  const sessionTitle=S.session.title||'Untitled';
+  $('topbarTitle').textContent=sessionTitle;
+  document.title=sessionTitle+' \u2014 Hermes';
   const vis=S.messages.filter(m=>m&&m.role&&m.role!=='tool');
   $('topbarMeta').textContent=`${vis.length} messages`;
   const m=S.session.model||'';
-  const MODEL_LABELS={'openai/gpt-5.4-mini':'GPT-5.4 Mini','openai/gpt-4o':'GPT-4o','openai/o3':'o3','openai/o4-mini':'o4-mini','anthropic/claude-sonnet-4.6':'Sonnet 4.6','anthropic/claude-sonnet-4-5':'Sonnet 4.5','anthropic/claude-haiku-3-5':'Haiku 3.5','google/gemini-2.5-pro':'Gemini 2.5 Pro','deepseek/deepseek-chat-v3-0324':'DeepSeek V3','meta-llama/llama-4-scout':'Llama 4 Scout'};
   $('modelSelect').value=m;  // set dropdown first so chip reads consistent value
+  // If session model isn't in the dropdown, add it dynamically
+  if(m && $('modelSelect').value!==m){
+    const opt=document.createElement('option');
+    opt.value=m;
+    opt.textContent=getModelLabel(m);
+    $('modelSelect').appendChild(opt);
+    $('modelSelect').value=m;
+  }
   // Show Clear button only when session has messages
   const clearBtn=$('btnClearConv');
-  if(clearBtn) clearBtn.style.display=(S.messages&&S.messages.filter(m=>m.role!=='tool').length>0)?'':'none';
+  if(clearBtn) clearBtn.style.display=(S.messages&&S.messages.filter(msg=>msg.role!=='tool').length>0)?'':'none';
   const displayModel=$('modelSelect').value||m;
-  $('modelChip').textContent=MODEL_LABELS[displayModel]||(displayModel.split('/').pop()||'Unknown');
+  $('modelChip').textContent=getModelLabel(displayModel);
   const ws=S.session.workspace||'';
   $('wsChip').textContent=ws.split('/').slice(-2).join('/')||ws;
   // Update workspace chip in topbar with friendly name from workspace list
@@ -250,7 +340,9 @@ function renderMessages(){
     // Action buttons for this bubble
     const editBtn  = isUser  ? `<button class="msg-action-btn" title="Edit message" onclick="editMessage(this)">&#9998;</button>` : '';
     const retryBtn = isLastAssistant ? `<button class="msg-action-btn" title="Regenerate response" onclick="regenerateResponse(this)">&#8635;</button>` : '';
-    row.innerHTML=`<div class="msg-role ${m.role}"><div class="role-icon ${m.role}">${isUser?'Y':'H'}</div><span style="font-size:12px">${isUser?'You':'Hermes'}</span><span class="msg-actions">${editBtn}<button class="msg-copy-btn msg-action-btn" title="Copy" onclick="copyMsg(this)">&#128203;</button>${retryBtn}</span></div>${filesHtml}<div class="msg-body">${bodyHtml}</div>`;
+    const tsVal=m._ts||m.timestamp;
+    const tsTitle=tsVal?new Date(tsVal*1000).toLocaleString():'';
+    row.innerHTML=`<div class="msg-role ${m.role}" ${tsTitle?`title="${esc(tsTitle)}"`:''}><div class="role-icon ${m.role}">${isUser?'Y':'H'}</div><span style="font-size:12px">${isUser?'You':'Hermes'}</span>${tsTitle?`<span class="msg-time">${new Date(tsVal*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>`:''}<span class="msg-actions">${editBtn}<button class="msg-copy-btn msg-action-btn" title="Copy" onclick="copyMsg(this)">&#128203;</button>${retryBtn}</span></div>${filesHtml}<div class="msg-body">${bodyHtml}</div>`;
     row.dataset.rawText = String(content).trim();
     inner.appendChild(row);
   }
@@ -286,9 +378,9 @@ function renderMessages(){
       else inner.appendChild(frag);
     }
   }
-  $('messages').scrollTop=$('messages').scrollHeight;
+  scrollToBottom();
   // Apply syntax highlighting after DOM is built
-  requestAnimationFrame(()=>highlightCode());
+  requestAnimationFrame(()=>{highlightCode();renderMermaidBlocks();});
   // Refresh todo panel if it's currently open
   if(typeof loadTodos==='function' && document.getElementById('panelTodos') && document.getElementById('panelTodos').classList.contains('active')){
     loadTodos();
@@ -463,15 +555,54 @@ function highlightCode(container) {
   if(typeof Prism === 'undefined' || !Prism.highlightAllUnder) return;
   const el = container || $('msgInner');
   if(!el) return;
-  // Prism autoloader handles language detection via class="language-xxx"
   Prism.highlightAllUnder(el);
+}
+
+let _mermaidLoading=false;
+let _mermaidReady=false;
+
+function renderMermaidBlocks(){
+  const blocks=document.querySelectorAll('.mermaid-block:not([data-rendered])');
+  if(!blocks.length) return;
+  if(!_mermaidReady){
+    if(!_mermaidLoading){
+      _mermaidLoading=true;
+      const script=document.createElement('script');
+      script.src='https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+      script.onload=()=>{
+        if(typeof mermaid!=='undefined'){
+          mermaid.initialize({startOnLoad:false,theme:'dark',themeVariables:{
+            primaryColor:'#4a6fa5',primaryTextColor:'#e2e8f0',lineColor:'#718096',
+            secondaryColor:'#2d3748',tertiaryColor:'#1a202c',primaryBorderColor:'#4a5568',
+          }});
+          _mermaidReady=true;
+          renderMermaidBlocks();
+        }
+      };
+      document.head.appendChild(script);
+    }
+    return;
+  }
+  blocks.forEach(async(block)=>{
+    block.dataset.rendered='true';
+    const code=block.textContent;
+    const id=block.dataset.mermaidId||('m-'+Math.random().toString(36).slice(2));
+    try{
+      const {svg}=await mermaid.render(id,code);
+      block.innerHTML=svg;
+      block.classList.add('mermaid-rendered');
+    }catch(e){
+      // Fall back to showing as a code block
+      block.innerHTML=`<div class="pre-header">mermaid</div><pre><code>${esc(code)}</code></pre>`;
+    }
+  });
 }
 
 function appendThinking(){
   $('emptyState').style.display='none';
   const row=document.createElement('div');row.className='msg-row';row.id='thinkingRow';
   row.innerHTML=`<div class="msg-role assistant"><div class="role-icon assistant">H</div>Hermes</div><div class="thinking"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
-  $('msgInner').appendChild(row);$('messages').scrollTop=$('messages').scrollHeight;
+  $('msgInner').appendChild(row);scrollToBottom();
 }
 function removeThinking(){const el=$('thinkingRow');if(el)el.remove();}
 
@@ -501,7 +632,37 @@ function renderFileTree(){
 
     // Name -- takes all remaining space, truncates with ellipsis
     const nameEl=document.createElement('span');
-    nameEl.className='file-name';nameEl.textContent=item.name;nameEl.title=item.name;
+    nameEl.className='file-name';nameEl.textContent=item.name;nameEl.title='Double-click to rename';
+    // Inline rename on double-click
+    nameEl.ondblclick=(e)=>{
+      e.stopPropagation();
+      const inp=document.createElement('input');
+      inp.className='file-rename-input';inp.value=item.name;
+      inp.onclick=(e2)=>e2.stopPropagation();
+      const finish=async(save)=>{
+        inp.onblur=null;  // prevent double-call: Enter triggers blur after replaceWith
+        if(save){
+          const newName=inp.value.trim();
+          if(newName&&newName!==item.name){
+            try{
+              await api('/api/file/rename',{method:'POST',body:JSON.stringify({
+                session_id:S.session.session_id,path:item.path,new_name:newName
+              })});
+              showToast(`Renamed to ${newName}`);
+              await loadDir('.');
+            }catch(err){showToast('Rename failed: '+err.message);}
+          }
+        }
+        inp.replaceWith(nameEl);
+      };
+      inp.onkeydown=(e2)=>{
+        if(e2.key==='Enter'){e2.preventDefault();finish(true);}
+        if(e2.key==='Escape'){e2.preventDefault();finish(false);}
+      };
+      inp.onblur=()=>finish(false);
+      nameEl.replaceWith(inp);
+      setTimeout(()=>{inp.focus();inp.select();},10);
+    };
     el.appendChild(nameEl);
 
     // Size -- only for files, right-aligned, shrinks but never wraps
@@ -512,7 +673,7 @@ function renderFileTree(){
       el.appendChild(sizeEl);
     }
 
-    // Delete button -- only for files, shown as a CSS class toggle on hover
+    // Delete button -- for files, shown on hover
     if(item.type==='file'){
       const del=document.createElement('button');
       del.className='file-del-btn';del.title='Delete';del.textContent='×';
@@ -548,6 +709,17 @@ async function promptNewFile(){
     // Open the new file immediately
     openFile(name.trim());
   }catch(e){setStatus('Create failed: '+e.message);}
+}
+
+async function promptNewFolder(){
+  if(!S.session)return;
+  const name=prompt('New folder name:','');
+  if(!name||!name.trim())return;
+  try{
+    await api('/api/file/create-dir',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:name.trim()})});
+    showToast(`Created folder ${name.trim()}`);
+    await loadDir('.');
+  }catch(e){setStatus('Create folder failed: '+e.message);}
 }
 
 function renderTray(){

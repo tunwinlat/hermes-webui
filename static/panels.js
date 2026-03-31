@@ -597,4 +597,175 @@ document.addEventListener('dragenter',e=>{e.preventDefault();if(e.dataTransfer.t
 document.addEventListener('dragleave',e=>{dragCounter--;if(dragCounter<=0){dragCounter=0;wrap.classList.remove('drag-over');}});
 document.addEventListener('drop',e=>{e.preventDefault();dragCounter=0;wrap.classList.remove('drag-over');const files=Array.from(e.dataTransfer.files);if(files.length){addFiles(files);$('msg').focus();}});
 
+// ── Settings panel ───────────────────────────────────────────────────────────
+
+function toggleSettings(){
+  const overlay=$('settingsOverlay');
+  if(!overlay) return;
+  if(overlay.style.display==='none'){
+    overlay.style.display='';
+    loadSettingsPanel();
+  } else {
+    overlay.style.display='none';
+  }
+}
+
+async function loadSettingsPanel(){
+  try{
+    const settings=await api('/api/settings');
+    // Populate model dropdown from /api/models
+    const modelSel=$('settingsModel');
+    if(modelSel){
+      modelSel.innerHTML='';
+      try{
+        const models=await api('/api/models');
+        for(const g of (models.groups||[])){
+          const og=document.createElement('optgroup');
+          og.label=g.provider;
+          for(const m of g.models){
+            const opt=document.createElement('option');
+            opt.value=m.id;opt.textContent=m.label;
+            og.appendChild(opt);
+          }
+          modelSel.appendChild(og);
+        }
+      }catch(e){}
+      modelSel.value=settings.default_model||'';
+    }
+    // Populate workspace dropdown from /api/workspaces
+    const wsSel=$('settingsWorkspace');
+    if(wsSel){
+      wsSel.innerHTML='';
+      try{
+        const wsData=await api('/api/workspaces');
+        for(const w of (wsData.workspaces||[])){
+          const opt=document.createElement('option');
+          opt.value=w.path;opt.textContent=w.name||w.path;
+          wsSel.appendChild(opt);
+        }
+      }catch(e){}
+      wsSel.value=settings.default_workspace||'';
+    }
+  }catch(e){
+    showToast('Failed to load settings: '+e.message);
+  }
+}
+
+async function saveSettings(){
+  const model=($('settingsModel')||{}).value;
+  const workspace=($('settingsWorkspace')||{}).value;
+  const body={};
+  if(model) body.default_model=model;
+  if(workspace) body.default_workspace=workspace;
+  try{
+    await api('/api/settings',{method:'POST',body:JSON.stringify(body)});
+    showToast('Settings saved');
+    toggleSettings();
+  }catch(e){
+    showToast('Save failed: '+e.message);
+  }
+}
+
+// Close settings on overlay click (not panel click)
+document.addEventListener('click',e=>{
+  const overlay=$('settingsOverlay');
+  if(overlay&&e.target===overlay) toggleSettings();
+});
+
+// ── Cron completion alerts ────────────────────────────────────────────────────
+
+let _cronPollSince=Date.now()/1000;  // track from page load
+let _cronPollTimer=null;
+let _cronUnreadCount=0;
+
+function startCronPolling(){
+  if(_cronPollTimer) return;
+  _cronPollTimer=setInterval(async()=>{
+    if(document.hidden) return;  // don't poll when tab is in background
+    try{
+      const data=await api(`/api/crons/recent?since=${_cronPollSince}`);
+      if(data.completions&&data.completions.length>0){
+        for(const c of data.completions){
+          const icon=c.status==='error'?'\u274c':'\u2705';
+          showToast(`${icon} Cron "${c.name}" ${c.status==='error'?'failed':'completed'}`,4000);
+          _cronPollSince=Math.max(_cronPollSince,c.completed_at);
+        }
+        _cronUnreadCount+=data.completions.length;
+        updateCronBadge();
+      }
+    }catch(e){}
+  },30000);
+}
+
+function updateCronBadge(){
+  const tab=document.querySelector('.nav-tab[data-panel="tasks"]');
+  if(!tab) return;
+  let badge=tab.querySelector('.cron-badge');
+  if(_cronUnreadCount>0){
+    if(!badge){
+      badge=document.createElement('span');
+      badge.className='cron-badge';
+      tab.style.position='relative';
+      tab.appendChild(badge);
+    }
+    badge.textContent=_cronUnreadCount>9?'9+':_cronUnreadCount;
+    badge.style.display='';
+  }else if(badge){
+    badge.style.display='none';
+  }
+}
+
+// Clear cron badge when Tasks tab is opened
+const _origSwitchPanel=switchPanel;
+switchPanel=async function(name){
+  if(name==='tasks'){_cronUnreadCount=0;updateCronBadge();}
+  return _origSwitchPanel(name);
+};
+
+// Start polling on page load
+startCronPolling();
+
+// ── Background agent error tracking ──────────────────────────────────────────
+
+const _backgroundErrors=[];  // {session_id, title, message, ts}
+
+function trackBackgroundError(sessionId, title, message){
+  // Only track if user is NOT currently viewing this session
+  if(S.session&&S.session.session_id===sessionId) return;
+  _backgroundErrors.push({session_id:sessionId, title:title||'Untitled', message, ts:Date.now()});
+  showErrorBanner();
+}
+
+function showErrorBanner(){
+  let banner=$('bgErrorBanner');
+  if(!banner){
+    banner=document.createElement('div');
+    banner.id='bgErrorBanner';
+    banner.className='bg-error-banner';
+    const msgs=document.querySelector('.messages');
+    if(msgs) msgs.parentNode.insertBefore(banner,msgs);
+    else document.body.appendChild(banner);
+  }
+  const latest=_backgroundErrors[0];  // FIFO: show oldest (first) error
+  if(!latest){banner.style.display='none';return;}
+  const count=_backgroundErrors.length;
+  banner.innerHTML=`<span>\u26a0 ${count>1?count+' sessions have':'"'+esc(latest.title)+'" has'} encountered an error</span><div style="display:flex;gap:6px;flex-shrink:0"><button class="reconnect-btn" onclick="navigateToErrorSession()">View</button><button class="reconnect-btn" onclick="dismissErrorBanner()">Dismiss</button></div>`;
+  banner.style.display='';
+}
+
+function navigateToErrorSession(){
+  const latest=_backgroundErrors.shift();  // FIFO: show oldest error first
+  if(latest){
+    loadSession(latest.session_id);renderSessionList();
+  }
+  if(_backgroundErrors.length===0) dismissErrorBanner();
+  else showErrorBanner();
+}
+
+function dismissErrorBanner(){
+  _backgroundErrors.length=0;
+  const banner=$('bgErrorBanner');
+  if(banner) banner.style.display='none';
+}
+
 // Event wiring

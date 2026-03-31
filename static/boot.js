@@ -24,6 +24,24 @@ $('btnExportJSON').onclick=()=>{
   const a=document.createElement('a');a.href=url;
   a.download=`hermes-${S.session.session_id}.json`;a.click();
 };
+$('btnImportJSON').onclick=()=>$('importFileInput').click();
+$('importFileInput').onchange=async(e)=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  e.target.value='';
+  try{
+    const text=await file.text();
+    const data=JSON.parse(text);
+    const res=await api('/api/session/import',{method:'POST',body:JSON.stringify(data)});
+    if(res.ok&&res.session){
+      await loadSession(res.session.session_id);
+      await renderSessionList();
+      showToast('Session imported');
+    }
+  }catch(err){
+    showToast('Import failed: '+(err.message||'Invalid JSON'));
+  }
+};
 // btnRefreshFiles is now panel-icon-btn in header (see HTML)
 $('btnClearPreview').onclick=()=>{
   $('previewArea').classList.remove('visible');
@@ -50,6 +68,9 @@ document.addEventListener('keydown',async e=>{
     if(!S.busy){await newSession();await renderSessionList();$('msg').focus();}
   }
   if(e.key==='Escape'){
+    // Close settings overlay if open
+    const settingsOverlay=$('settingsOverlay');
+    if(settingsOverlay&&settingsOverlay.style.display!=='none'){toggleSettings();return;}
     // Close workspace dropdown
     closeWsDropdown();
     // Clear session search
@@ -130,6 +151,8 @@ document.querySelectorAll('.suggestion').forEach(btn=>{
 })();
 
 (async()=>{
+  // Fetch available models from server and populate dropdown dynamically
+  await populateModelDropdown();
   // Restore last-used model preference
   const savedModel=localStorage.getItem('hermes-webui-model');
   if(savedModel && $('modelSelect')){

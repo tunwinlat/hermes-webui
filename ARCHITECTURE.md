@@ -11,39 +11,63 @@
 
 ## 1. Overview and Purpose
 
-The Hermes Web UI is a lightweight, single-file web application that gives you
-a browser-based interface to the Hermes agent that is functionally equivalent to the CLI.
-It is modeled on the Claude interface: a three-panel layout with a sidebar for
-session management, a central chat area, and a right panel for workspace file browsing.
+The Hermes Web UI is a lightweight web application that gives you a browser-based
+interface to the Hermes agent that is functionally equivalent to the CLI. It is modeled on
+the Claude-style interface: a three-panel layout with a sidebar for session management,
+a central chat area, and a right panel for workspace file browsing.
 
 The design philosophy is deliberately minimal. There is no build step, no bundler, no
-frontend framework. Everything ships from a single Python file. This makes the code easy
-to modify from a terminal or by an agent, but it creates architectural debt that grows as
-the feature set expands.
+frontend framework. The Python server is split into a routing shell (server.py) and
+business logic modules (api/). The frontend is six vanilla JS modules loaded from static/.
+This makes the code easy to modify from a terminal or by an agent.
 
 ---
 
 ## 2. File Inventory
 
-    <agent-dir>/webui-mvp/
-    server.py          Main server file. ~1150 lines. Pure Python.
-                       HTTP server, all API handlers, Session model, SSE engine,
-                       approval wiring, file upload parser. No inline HTML/CSS/JS.
-                       (Phase A+E complete: HTML/CSS/JS all extracted to static/)
-    server.py.bak      Backup from a prior iteration. Kept for reference.
-    server_new.py      Intermediate ~900-line draft. Superseded by server.py.
-                       Safe to delete once Wave 1 begins.
-    start.sh           Convenience script: kills running instance, starts server.py
-                       via nohup, writes stdout/stderr to /tmp/webui-mvp.log
-    AGENTS.md          Instruction file for agents working in this directory.
-    ROADMAP.md         Feature and product roadmap document.
-    ARCHITECTURE.md    THIS FILE.
+    <repo>/
+    server.py              Thin routing shell + HTTP Handler. ~76 lines. Pure Python.
+                           Delegates all route handling to api/routes.py.
+    start.sh               Discovery script: finds agent dir, Python, starts server.
+    api/
+      __init__.py          Package marker
+      routes.py            All GET + POST route handlers (~802 lines)
+      config.py            Shared configuration, constants, global state, model discovery (~453 lines)
+      helpers.py           HTTP helpers: j(), bad(), require(), safe_resolve() (~57 lines)
+      models.py            Session model + CRUD (~114 lines)
+      workspace.py         File ops: list_dir, read_file_content, workspace helpers (~77 lines)
+      upload.py            Multipart parser, file upload handler (~77 lines)
+      streaming.py         SSE engine, run_agent integration, cancel support (~218 lines)
+    static/
+      index.html           HTML template (served from disk)
+      style.css            All CSS
+      ui.js                DOM helpers, renderMd, tool cards, model dropdown (~671 lines)
+      workspace.js         File tree, preview, file ops (~168 lines)
+      sessions.js          Session CRUD, list rendering, search (~206 lines)
+      messages.js          send(), SSE event handlers, approval, transcript (~310 lines)
+      panels.js            Cron, skills, memory, workspace, todo, switchPanel (~600 lines)
+      boot.js              Event wiring + boot IIFE (~154 lines)
+    tests/
+      conftest.py          Isolated test server (port 8788, separate HERMES_HOME) (~240 lines)
+      test_sprint1-11.py   Feature tests per sprint (13 files)
+      test_regressions.py  Permanent regression gate
+    AGENTS.md              Instruction file for agents working in this directory.
+    ROADMAP.md             Feature and product roadmap document.
+    SPRINTS.md             Forward sprint plan with CLI + Claude parity targets.
+    ARCHITECTURE.md        THIS FILE.
+    TESTING.md             Manual browser test plan and automated coverage reference.
+    CHANGELOG.md           Release notes per sprint.
+    PORTABILITY.md         Portability design spec for download-and-run installs.
+    requirements.txt       Python dependencies.
+    .env.example           Sample environment variable overrides.
 
 State directory (runtime data, separate from source):
 
     ~/.hermes/webui-mvp/
     sessions/          One JSON file per session: {session_id}.json
-    test-workspace/    Default empty workspace used during development
+    workspaces.json    Registered workspaces list
+    last_workspace.txt Last-used workspace path
+    settings.json      (future) User settings
 
 Log file:
 
@@ -301,13 +325,21 @@ read_file_content(workspace, rel):
 
 ### 5.1 Structure
 
-The entire frontend is ~750 lines inside the HTML Python raw string.
-Structure: <head> with CSS only (no external stylesheets), <body> with three-panel layout,
-<script> with all JavaScript (no external libraries).
+The frontend is served from static/ as separate files: one HTML template, one CSS file,
+and six JavaScript modules (~2,025 lines total). External dependency: Prism.js from CDN
+(syntax highlighting, loaded async/deferred).
 
-Three-panel layout:
+Six JS modules loaded in order at end of <body>:
+  1. ui.js       (~589 lines) DOM helpers, renderMd, tool card rendering, global state
+  2. workspace.js (~168 lines) File tree, preview, file operations
+  3. sessions.js  (~206 lines) Session CRUD, list rendering, search
+  4. messages.js  (~310 lines) send(), SSE event handlers, approval, transcript
+  5. panels.js    (~600 lines) Cron, skills, memory, workspace, todo, switchPanel
+  6. boot.js      (~152 lines) Event wiring + boot IIFE
 
-    <aside class="sidebar">    Left panel: session list, model selector, workspace path
+Three-panel layout (in static/index.html):
+
+    <aside class="sidebar">    Left panel: session list, nav tabs, model selector
     <main class="main">        Center: topbar, messages area, approval card, composer
     <aside class="rightpanel"> Right panel: workspace file tree and file preview
 
@@ -477,13 +509,17 @@ Step-by-step trace of what happens when you type a message and press Send:
 
 ## 7. Dependency Map
 
-Direct imports in server.py:
+server.py imports from api/ modules (config, helpers, models, workspace, upload, streaming).
+The api/ modules in turn import Hermes internals:
 
-    run_agent.AIAgent              Main agent class. Wraps LLM + tool execution.
-    tools.approval.*               Module-level approval state.
-    yaml                           Config loading.
-    Standard library: json, os, re, sys, threading, time, traceback, uuid,
-                      http.server, pathlib, urllib.parse, email.parser, queue
+    api/streaming.py imports:
+      run_agent.AIAgent              Main agent class. Wraps LLM + tool execution.
+    api/config.py imports:
+      yaml                           Config loading.
+    server.py imports:
+      tools.approval.*               Module-level approval state (with graceful fallback).
+    Standard library across all modules: json, os, re, sys, threading, time, traceback,
+      uuid, http.server, pathlib, urllib.parse, email.parser, queue, collections
 
 AIAgent constructor parameters used:
 
@@ -561,52 +597,33 @@ restriction from the UI yet (see ROADMAP.md Wave 4 for the plan).
 These phases run in parallel with the feature roadmap. Each phase targets software
 quality: testability, resilience, maintainability, and modularity.
 
-### Phase A: File Separation (Priority: High, Effort: Medium)
+### Phase A: File Separation -- COMPLETE
 
-Split server.py into a proper package.
+Split server.py into a proper package. Completed across Sprints 4-10.
 
-Target structure:
+Current structure:
 
-    webui-mvp/
-      server.py               Entry point: starts server, imports api/
+    <repo>/
+      server.py               Entry point + HTTP Handler routing (~704 lines)
       api/
         __init__.py
-        handlers.py           do_GET / do_POST routing and dispatch
-        session_store.py      Session class, get_session, new_session, all_sessions, SESSIONS
-        streaming.py          _run_agent_streaming, STREAMS, STREAMS_LOCK, _sse()
-        upload.py             parse_multipart, handle_upload
-        files.py              safe_resolve, list_dir, read_file_content
-        approval.py           Thin wrapper around tools.approval for the HTTP API
-        config.py             Configuration loading (env vars, config.yaml)
+        config.py             Configuration, constants, global state (~273 lines)
+        helpers.py            HTTP helpers: j(), bad(), require(), safe_resolve() (~57 lines)
+        models.py             Session model + CRUD (~114 lines)
+        workspace.py          File ops, workspace management (~77 lines)
+        upload.py             Multipart parser, file upload handler (~77 lines)
+        streaming.py          SSE engine, run_agent, cancel support (~218 lines)
       static/
-        index.html            HTML document (served directly from disk)
+        index.html            HTML document (served from disk)
         style.css             All CSS
-        [app.js deleted]      Replaced by 6 modules: ui.js, workspace.js, sessions.js,
-                              messages.js, panels.js, boot.js
+        ui.js, workspace.js, sessions.js, messages.js, panels.js, boot.js
       tests/
-        test_session_crud.py
-        test_upload.py
-        test_streaming.py
-        test_approval.py
-        test_files.py
-        frontend/
-          test_markdown.html
-          test_session_state.html
+        conftest.py           Isolated test server on port 8788
+        test_sprint1-10.py    Feature tests per sprint (12 files)
+        test_regressions.py   Permanent regression gate
 
-Implementation steps:
-1. Extract CSS and HTML to static/style.css and static/index.html. No content changes.
-   Server serves index.html from disk: handler reads Path('static/index.html').read_text()
-2. Extract JS to 6 static modules (complete -- app.js deleted Sprint 9)
-   Add GET /static/* handler in do_GET.
-3. Extract Session class and helpers to api/session_store.py
-4. Extract _run_agent_streaming and SSE helpers to api/streaming.py
-5. Extract parse_multipart and handle_upload to api/upload.py
-6. Extract list_dir and friends to api/files.py
-7. Refactor handlers.py to import from the above modules
-8. server.py becomes: config setup, start server, import Handler from handlers.py
-
-Benefit: Each file is under ~200 lines. Agents can read and modify individual files
-without loading the full 1100-line blob.
+Remaining: server.py still has all 49 route handlers in one do_GET/do_POST class.
+Sprint 11 plans extracting these to api/routes.py, making server.py a ~50-line shell.
 
 ### Phase B: Thread-Safe Request Context (Priority: Critical, Effort: Medium)
 
@@ -637,72 +654,36 @@ Option 3 (interim, safe for single-user): Wrap the env var block in a per-sessio
 Phase B also includes: review all other os.environ reads/writes in the codebase for
 similar thread-safety issues.
 
-### Phase C: Session Store Improvements (Priority: Medium, Effort: Medium)
+### Phase C: Session Store Improvements -- COMPLETE
 
-Three problems to fix:
+All three problems fixed in Sprint 5:
 
-1. Unbounded SESSIONS cache:
-   Replace dict with functools.lru_cache wrapper or a simple OrderedDict with max size.
-   Evict LRU entries when size exceeds 100.
+1. SESSIONS cache: OrderedDict with LRU cap of 100, oldest evicted automatically.
+2. LOCK: all SESSIONS dict reads/writes wrapped with LOCK (from Sprint 1).
+3. Session index: `sessions/_index.json` maintained on every save/delete.
+   `all_sessions()` reads the index file (O(1)) instead of scanning all JSONs.
 
-2. No locking around SESSIONS:
-   Wrap all SESSIONS dict reads and writes with LOCK (already defined, just unused).
-   Pattern: with LOCK: s = SESSIONS.get(sid)
+### Phase D: Input Validation and Error Handling -- COMPLETE
 
-3. O(n) directory scan in all_sessions():
-   Add an index file: SESSION_DIR/index.json
-   Contents: list of compact() dicts, sorted by updated_at
-   Maintained on every Session.save() and every delete.
-   all_sessions() reads index.json (one file read) instead of scanning all JSONs.
-   get_session() still loads the full {session_id}.json on cache miss.
-   Index rebuild tool: a function that regenerates index.json from all *.json files.
+Completed in Sprint 4-6:
 
-### Phase D: Input Validation and Error Handling (Priority: Medium, Effort: Low)
+1. `require()` and `bad()` helpers in `api/helpers.py` for parameter validation.
+2. All endpoints return clean 400/404 responses instead of tracebacks.
+3. Structured JSON request logging via `log_request()` override (Sprint 1).
 
-1. Add a validate() helper:
-   def validate(body, *required_fields):
-       missing = [f for f in required_fields if not body.get(f)]
-       if missing: raise ValueError(f"Missing required fields: {missing}")
+### Phase E: Frontend Modularization -- COMPLETE
 
-2. Refine the outer try/except in do_GET and do_POST:
-   except ValueError as e:
-       return j(self, {'error': str(e)}, status=400)
-   except KeyError as e:
-       return j(self, {'error': f'Not found: {e}'}, status=404)
-   except Exception as e:
-       log.exception('Unhandled error')
-       return j(self, {'error': 'Internal server error'}, status=500)
-   # Never expose tracebacks to the client (security risk even on localhost)
+Completed across Sprints 5, 6, and 9:
 
-3. Add request duration logging:
-   Log at INFO level: {method} {path} -> {status} in {duration}ms
+1. HTML extracted to `static/index.html` (Sprint 6).
+2. CSS extracted to `static/style.css` (Sprint 4).
+3. `app.js` deleted Sprint 9, replaced by 6 focused modules:
+   `ui.js`, `workspace.js`, `sessions.js`, `messages.js`, `panels.js`, `boot.js`.
+   Loaded as standard `<script>` tags (not ES modules) in dependency order.
+4. Prism.js added for syntax highlighting (Sprint 8) via CDN, deferred load.
 
-### Phase E: Frontend Modularization (Priority: Medium, Effort: High)
-
-After Phase A splits the HTML/JS into files, Phase E improves the JavaScript itself.
-
-1. Switch to ES Modules (type="module"):
-   app.js deleted Sprint 9 -- replaced by 6 modules:
-   - state.js: export S, INFLIGHT
-   - sessions.js: session CRUD functions
-   - chat.js: send(), SSE handling
-   - files.js: loadDir(), openFile()
-   - upload.js: uploadPendingFiles(), addFiles(), renderTray()
-   - approval.js: approval card and polling
-   - markdown.js: renderMd()
-   - ui.js: setStatus, setBusy, showToast, syncTopbar
-   Each module imports what it needs from state.js and other modules.
-
-2. Replace renderMd with marked.js:
-   CDN: https://cdn.jsdelivr.net/npm/marked/marked.min.js
-   No bundler needed, ~50KB, handles tables, nested lists, HTML sanitization.
-   Usage: marked.parse(raw) -- drop-in replacement.
-   Add DOMPurify alongside for XSS sanitization of rendered HTML.
-
-3. Add Prism.js for syntax highlighting:
-   CDN: https://cdn.jsdelivr.net/npm/prismjs
-   Apply after renderMd: Prism.highlightAllUnder(element)
-   Supports 200+ languages with auto-detection.
+Remaining: renderMd() is still a hand-rolled regex chain. Tables partially supported.
+Replacing with marked.js + DOMPurify is a future improvement (not blocking).
 
 ### Phase F: API Design Cleanup (Priority: Low, Effort: Medium)
 
@@ -719,16 +700,11 @@ After Phase A splits the HTML/JS into files, Phase E improves the JavaScript its
 
 4. Consistent naming: use snake_case for all JSON keys.
 
-### Phase G: Observability (Priority: Low, Effort: Low)
+### Phase G: Observability -- MOSTLY COMPLETE
 
-1. Structured JSON logging to /tmp/webui-mvp.log:
-   {"ts": "...", "method": "POST", "path": "/api/chat/start", "status": 200, "ms": 12}
-
-2. Enhanced /health response:
-   {"status": "ok", "sessions": 10, "active_streams": 2, "uptime_s": 3600, "version": "0.3"}
-
-3. GET /api/debug/stats (localhost only):
-   {"sessions_cached": N, "streams_active": M, "memory_mb": X}
+1. Structured JSON logging: COMPLETE (Sprint 1). Per-request JSON to /tmp/webui-mvp.log.
+2. Enhanced /health: COMPLETE (Sprint 7). Returns `active_streams`, `uptime_seconds`.
+3. GET /api/debug/stats: NOT YET IMPLEMENTED. Low priority.
 
 ### Phase H: Authentication (Priority: Low, Effort: Medium)
 
@@ -740,29 +716,15 @@ Optional password gate for non-SSH-tunnel deployments.
 4. All API endpoints check cookie if HERMES_WEBUI_PASSWORD is set
 5. Cookie validity: 30 days from last activity
 
-### Phase I: Test Infrastructure (Priority: High, Effort: High)
+### Phase I: Test Infrastructure -- COMPLETE
 
-No tests exist today. This is the highest-risk technical debt.
+190 tests across 12 test files + regression gate. Isolated test server on port 8788
+with separate HERMES_HOME, wiped per run. Production data never touched.
 
-1. Python unit tests (pytest):
-   - tests/test_session_crud.py: Session class, get_session, new_session, all_sessions
-   - tests/test_upload.py: parse_multipart directly with known byte payloads
-   - tests/test_files.py: safe_resolve, list_dir, read_file_content with tmp dirs
-   - tests/test_streaming.py: mock AIAgent, verify event sequence
-   - tests/test_approval.py: approval state machine
+Test files: `test_sprint1.py` through `test_sprint10.py`, `test_regressions.py`.
+Fixtures in `conftest.py`: auto-cleanup, cron isolation, workspace reset.
 
-2. HTTP integration tests:
-   - Start a test server on a random port
-   - Drive it with httpx or requests
-   - Verify all API endpoints return correct shapes and status codes
-
-3. Frontend tests (no build step):
-   - tests/frontend/test_markdown.html: known input -> expected HTML output assertions
-   - Run via: python3 -m http.server and open in browser, or use playwright
-
-4. CI (GitHub Actions):
-   - .github/workflows/test.yml: on push, run pytest + ruff lint
-   - Target: zero test failures before merging any feature branch
+Remaining: no CI (GitHub Actions), no frontend tests (browser-based).
 
 ### Phase J: Performance (Priority: Low, Effort: High)
 
@@ -985,7 +947,7 @@ Resolution: Phase B replaces with thread-local or explicit parameter passing.
             Bug fix: Escape from file editor now cancels edits
             New endpoints: POST /api/crons/create, GET /api/session/export
             Tests: 16 new, 106/106 total
-    v0.0.6  Sprint 8 (March 31, 2026):
+    v0.10  Sprint 8 (March 31, 2026):
             Features: edit+regenerate messages, regenerate last response, clear conversation,
                        Prism.js syntax highlighting, message queue (MSG_QUEUE + drain on idle),
                        INFLIGHT-first loadSession (message persists on switch-away/back)
@@ -994,22 +956,22 @@ Resolution: Phase B replaces with thread-local or explicit parameter passing.
             Tests: 14 new, 139/139 total
             JS: MSG_QUEUE global, updateQueueBadge(), setBusy drain logic, send() queues when busy,
                 loadSession checks INFLIGHT before server fetch
-    v0.1.0 Concurrency sweeps (March 31, 2026):
+    v0.12.2 Concurrency sweeps (March 31, 2026):
             R10-R15: approval cross-session, activity bar per-session, live card
             restore on switch-back, settled cards after done, model source,
             newSession card clear. 190/190 tests.
-    v0.0.8  Sprint 10 (March 31, 2026):
+    v0.12  Sprint 10 (March 31, 2026):
             Arch: server.py split into api/ modules (config, helpers, models, workspace, upload, streaming)
             Features: background task cancel, cron run history, tool card UX polish
             Post-sprint fixes: SSE cancel event breaks loop, Cancel button always hidden on setBusy(false),
-              S.activeStreamId initialized, tool-card show-more uses data attributes, version label v0.0.8,
+              S.activeStreamId initialized, tool-card show-more uses data attributes, version label v0.12,
               Session.__init__ **kwargs forward-compat, test cron isolation via HERMES_HOME,
               last_workspace reset in conftest between tests, tool cards grouped by assistant turn
             Tests: 18 new, 167/167 total
             Regressions fixed: uuid, AIAgent, has_pending, SSE cancel loop, Session.__init__ tool_calls
             test_regressions.py: 10 tests -- one per introduced bug, permanent regression gate
             Total after fixes: 177/177
-    v0.0.7  Sprint 9 (March 31, 2026):
+    v0.11  Sprint 9 (March 31, 2026):
             Arch: app.js deleted; replaced by ui.js, workspace.js, sessions.js, messages.js, panels.js, boot.js
             Features: tool call cards (inline collapsible, live + history), attachment persistence,
                        todo list panel (parses tool results from session history)

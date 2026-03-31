@@ -1,5 +1,5 @@
 """
-Hermes WebUI -- SSE streaming engine and agent thread runner.
+Hermes Web UI -- SSE streaming engine and agent thread runner.
 Includes Sprint 10 cancel support via CANCEL_FLAGS.
 """
 import json

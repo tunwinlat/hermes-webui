@@ -29,7 +29,7 @@ async function send(){
 
   $('msg').value='';autoResize();
   const displayText=text||(uploaded.length?`Uploaded: ${uploaded.join(', ')}`:'(file upload)');
-  const userMsg={role:'user',content:displayText,attachments:uploaded.length?uploaded:undefined};
+  const userMsg={role:'user',content:displayText,attachments:uploaded.length?uploaded:undefined,_ts:Date.now()/1000};
   S.toolCalls=[];  // clear tool calls from previous turn
   clearLiveToolCards();  // clear any leftover live cards from last turn
   S.messages.push(userMsg);renderMessages();appendThinking();setBusy(true);  // activity bar shown via setBusy
@@ -96,143 +96,126 @@ async function send(){
     $('msgInner').appendChild(assistantRow);
   }
 
-  const es=new EventSource(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`);
+  // ── Shared SSE handler wiring (used for initial connection and reconnect) ──
+  let _reconnectAttempted=false;
 
-  es.addEventListener('token',e=>{
-    // Guard: if the user switched sessions, don't write tokens to the wrong DOM
-    if(!S.session||S.session.session_id!==activeSid) return;
-    const d=JSON.parse(e.data);
-    assistantText+=d.text;
-    ensureAssistantRow();
-    assistantBody.innerHTML=renderMd(assistantText);
-    $('messages').scrollTop=$('messages').scrollHeight;
-  });
+  function _wireSSE(source){
+    source.addEventListener('token',e=>{
+      if(!S.session||S.session.session_id!==activeSid) return;
+      const d=JSON.parse(e.data);
+      assistantText+=d.text;
+      ensureAssistantRow();
+      assistantBody.innerHTML=renderMd(assistantText);
+      scrollIfPinned();
+    });
 
-  es.addEventListener('tool',e=>{
-    const d=JSON.parse(e.data);
-    // Only update activity bar if viewing this session
-    if(S.session&&S.session.session_id===activeSid){
-      setStatus(`${d.name}${d.preview?' · '+d.preview.slice(0,55):''}`);
-    }
-    if(!S.session||S.session.session_id!==activeSid) return;
-    removeThinking();
-    const oldRow=$('toolRunningRow');if(oldRow)oldRow.remove();
-    // Append card to the stable live container -- no renderMessages() call
-    const tc={name:d.name, preview:d.preview||'', args:d.args||{}, snippet:'', done:false};
-    S.toolCalls.push(tc);
-    appendLiveToolCard(tc);
-    $('messages').scrollTop=$('messages').scrollHeight;
-  });
-
-  es.addEventListener('approval',e=>{
-    const d=JSON.parse(e.data);
-    // Tag the approval with the session that owns it so respondApproval uses correct sid
-    d._session_id=activeSid;
-    showApprovalCard(d);
-  });
-
-  es.addEventListener('done',e=>{
-    es.close();
-    const d=JSON.parse(e.data);
-    delete INFLIGHT[activeSid];
-    clearInflight();
-    stopApprovalPolling();
-    // Only hide approval card if it belongs to the session that just finished
-    if(!_approvalSessionId || _approvalSessionId===activeSid) hideApprovalCard();
-    // Only clear active stream state if this is the currently viewed session
-    if(S.session&&S.session.session_id===activeSid){
-      S.activeStreamId=null;
-      const _cb=$('btnCancel');if(_cb)_cb.style.display='none';
-    }
-    if(S.session&&S.session.session_id===activeSid){
-      S.session=d.session;S.messages=d.session.messages||[];
-      // Populate tool calls from server-extracted metadata (has snippets)
-      if(d.session.tool_calls&&d.session.tool_calls.length){
-        S.toolCalls=d.session.tool_calls.map(tc=>({...tc,done:true}));
-      } else {
-        S.toolCalls=S.toolCalls.map(tc=>({...tc,done:true}));
+    source.addEventListener('tool',e=>{
+      const d=JSON.parse(e.data);
+      if(S.session&&S.session.session_id===activeSid){
+        setStatus(`${d.name}${d.preview?' · '+d.preview.slice(0,55):''}`);
       }
-      if(uploaded.length){
-        const lastUser=[...S.messages].reverse().find(m=>m.role==='user');
-        if(lastUser)lastUser.attachments=uploaded;
-      }
-      clearLiveToolCards();
-      // Set S.busy=false BEFORE renderMessages so the settled tool card
-      // block (!S.busy guard) can render the final grouped cards.
-      S.busy=false;
-      syncTopbar();renderMessages();loadDir('.');
-    }
-    renderSessionList();setBusy(false);setStatus('');
-  });
+      if(!S.session||S.session.session_id!==activeSid) return;
+      removeThinking();
+      const oldRow=$('toolRunningRow');if(oldRow)oldRow.remove();
+      const tc={name:d.name, preview:d.preview||'', args:d.args||{}, snippet:'', done:false};
+      S.toolCalls.push(tc);
+      appendLiveToolCard(tc);
+      scrollIfPinned();
+    });
 
-  es.addEventListener('error',e=>{
-    es.close();
-    delete INFLIGHT[activeSid];
-    clearInflight();
-    stopApprovalPolling();
-    // Only hide approval card if it belongs to the session that just finished
-    if(!_approvalSessionId || _approvalSessionId===activeSid) hideApprovalCard();
-    if(S.session&&S.session.session_id===activeSid){
-      S.activeStreamId=null;
-      const _cbe=$('btnCancel');if(_cbe)_cbe.style.display='none';
-    }
-    let msg='Connection error';
-    try{const d=JSON.parse(e.data);msg=d.message||msg;}catch(_){}
-    if(S.session&&S.session.session_id===activeSid){
-      clearLiveToolCards();
-      if(!assistantText){removeThinking();}
-      S.messages.push({role:'assistant',content:`**Error:** ${msg}`});
-      renderMessages();
-    }
-    if(!S.session || !INFLIGHT[S.session.session_id]){
-      setBusy(false);setStatus('Error: '+msg);
-    }
-  });
+    source.addEventListener('approval',e=>{
+      const d=JSON.parse(e.data);
+      d._session_id=activeSid;
+      showApprovalCard(d);
+    });
 
-  es.addEventListener('cancel',e=>{
-    es.close();
-    delete INFLIGHT[activeSid];
-    clearInflight();
-    stopApprovalPolling();
-    // Only hide approval card if it belongs to the session that just finished
-    if(!_approvalSessionId || _approvalSessionId===activeSid) hideApprovalCard();
-    if(S.session&&S.session.session_id===activeSid){
-      S.activeStreamId=null;
-      const _cbc=$('btnCancel');if(_cbc)_cbc.style.display='none';
-    }
-    if(S.session&&S.session.session_id===activeSid){
-      clearLiveToolCards();
-      if(!assistantText){removeThinking();}
-      S.messages.push({role:'assistant',content:'*Task cancelled.*'});
-      renderMessages();
-    }
-    renderSessionList();
-    if(!S.session || !INFLIGHT[S.session.session_id]){
-      setBusy(false);setStatus('');
-    }
-  });
-
-  // Handle SSE connection errors (network drop etc)
-  es.onerror=()=>{
-    if(es.readyState===EventSource.CLOSED){
+    source.addEventListener('done',e=>{
+      source.close();
+      const d=JSON.parse(e.data);
       delete INFLIGHT[activeSid];
+      clearInflight();
       stopApprovalPolling();
-    // Only hide approval card if it belongs to the session that just finished
-    if(!_approvalSessionId || _approvalSessionId===activeSid) hideApprovalCard();
+      if(!_approvalSessionId || _approvalSessionId===activeSid) hideApprovalCard();
       if(S.session&&S.session.session_id===activeSid){
         S.activeStreamId=null;
-        const _cbo=$('btnCancel');if(_cbo)_cbo.style.display='none';
+        const _cb=$('btnCancel');if(_cb)_cb.style.display='none';
       }
-      if(!assistantText&&S.session&&S.session.session_id===activeSid){
-        removeThinking();
-        S.messages.push({role:'assistant',content:'**Error:** Connection lost'});
-        renderMessages();
+      if(S.session&&S.session.session_id===activeSid){
+        S.session=d.session;S.messages=d.session.messages||[];
+        if(d.session.tool_calls&&d.session.tool_calls.length){
+          S.toolCalls=d.session.tool_calls.map(tc=>({...tc,done:true}));
+        } else {
+          S.toolCalls=S.toolCalls.map(tc=>({...tc,done:true}));
+        }
+        if(uploaded.length){
+          const lastUser=[...S.messages].reverse().find(m=>m.role==='user');
+          if(lastUser)lastUser.attachments=uploaded;
+        }
+        clearLiveToolCards();
+        S.busy=false;
+        syncTopbar();renderMessages();loadDir('.');
       }
-      if(!S.session || !INFLIGHT[S.session.session_id]){
-        setBusy(false);setStatus('');
+      renderSessionList();setBusy(false);setStatus('');
+    });
+
+    source.addEventListener('error',e=>{
+      source.close();
+      // Attempt one reconnect if the stream is still active server-side
+      if(!_reconnectAttempted && streamId){
+        _reconnectAttempted=true;
+        setStatus('Connection lost \u2014 reconnecting\u2026');
+        setTimeout(async()=>{
+          try{
+            const st=await api(`/api/chat/stream/status?stream_id=${encodeURIComponent(streamId)}`);
+            if(st.active){
+              setStatus('Reconnected');
+              _wireSSE(new EventSource(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`));
+              return;
+            }
+          }catch(_){}
+          _handleStreamError();
+        },1500);
+        return;
+      }
+      _handleStreamError();
+    });
+
+    source.addEventListener('cancel',e=>{
+      source.close();
+      delete INFLIGHT[activeSid];clearInflight();stopApprovalPolling();
+      if(!_approvalSessionId||_approvalSessionId===activeSid) hideApprovalCard();
+      if(S.session&&S.session.session_id===activeSid){
+        S.activeStreamId=null;const _cbc=$('btnCancel');if(_cbc)_cbc.style.display='none';
+      }
+      if(S.session&&S.session.session_id===activeSid){
+        clearLiveToolCards();if(!assistantText)removeThinking();
+        S.messages.push({role:'assistant',content:'*Task cancelled.*'});renderMessages();
+      }
+      renderSessionList();
+      if(!S.session||!INFLIGHT[S.session.session_id]){setBusy(false);setStatus('');}
+    });
+  }
+
+  function _handleStreamError(){
+    delete INFLIGHT[activeSid];clearInflight();stopApprovalPolling();
+    if(!_approvalSessionId||_approvalSessionId===activeSid) hideApprovalCard();
+    if(S.session&&S.session.session_id===activeSid){
+      S.activeStreamId=null;const _cbe=$('btnCancel');if(_cbe)_cbe.style.display='none';
+      clearLiveToolCards();if(!assistantText)removeThinking();
+      S.messages.push({role:'assistant',content:'**Error:** Connection lost'});renderMessages();
+    }else{
+      // User switched away — show background error banner
+      if(typeof trackBackgroundError==='function'){
+        // Look up session title from the session list cache so the banner names it correctly
+        const _errTitle=(typeof _allSessions!=='undefined'&&_allSessions.find(s=>s.session_id===activeSid)||{}).title||null;
+        trackBackgroundError(activeSid,_errTitle,'Connection lost');
       }
     }
-  };
+    if(!S.session||!INFLIGHT[S.session.session_id]){setBusy(false);setStatus('Error: Connection lost');}
+  }
+
+  _wireSSE(new EventSource(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`));
+
 }
 
 function transcript(){

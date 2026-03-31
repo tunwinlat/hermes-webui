@@ -1,10 +1,10 @@
-# Hermes WebUI: Full Parity Roadmap
+# Hermes Web UI: Full Parity Roadmap
 
 > Goal: Full 1:1 parity with the Hermes CLI experience via a clean dark web UI.
 > Everything you can do from the CLI terminal, you can do from this UI.
 >
-> Last updated: Post-Sprint 10 bug sweeps (March 31, 2026)
-> Tests: 190/190 passing
+> Last updated: Sprint 14 (March 30, 2026)
+> Tests: 226/226 passing
 > Source: <repo>/
 
 ---
@@ -27,6 +27,9 @@
 | Sprint 10 | Server health + operational polish | server.py split into api/ modules, background task cancel, cron run history viewer, tool card UX polish | 167 |
 | Sprint 10 fixes | Import regressions + regression tests | uuid, AIAgent, has_pending, SSE cancel loop, Session.__init__ tool_calls; test_regressions.py | 177 |
 | Concurrency sweeps | Multi-session correctness | Approval cross-session (R10), activity bar per-session (R11), live cards on switch-back (R12), tool cards after done (R13), session model authoritative (R14), newSession cards (R15) | 190 |
+| Sprint 11 | Multi-provider models + streaming | Dynamic model dropdown (any Hermes provider), smooth scroll pinning, routes extracted to api/routes.py (server.py 704→76 lines) | 201 |
+| Sprint 12 | Settings + reliability + session QoL | Settings panel (gear icon, settings.json), SSE auto-reconnect, pin sessions, import session from JSON | 211 |
+| Sprint 13 | Alerts + polish | Cron completion alerts (polling + badge), background error banner, session duplicate, browser tab title | 221 |
 
 ---
 
@@ -34,10 +37,10 @@
 
 | Layer | Location | Status |
 |-------|----------|--------|
-| Python server | <repo>/server.py (~1100 lines) | Pure Python, no inline HTML/CSS/JS |
+| Python server | <repo>/server.py (~76 lines) + api/ modules (~1900 lines) | Thin shell + business logic in api/ |
 | HTML template | <repo>/static/index.html | Served from disk |
 | CSS | <repo>/static/style.css | Served from disk |
-| JavaScript | <repo>/static/app.js | Served from disk |
+| JavaScript | <repo>/static/{ui,workspace,sessions,messages,panels,boot}.js | 6 modules, ~2250 lines total |
 | Runtime state | ~/.hermes/webui-mvp/sessions/ | Session JSON files |
 | Test server | Port 8788, state dir ~/.hermes/webui-mvp-test/ | Isolated, wiped per run |
 | Production server | Port 8787 | SSH tunnel from Mac |
@@ -49,6 +52,7 @@
 ### Chat and Agent
 - [x] Send messages, get SSE-streaming responses
 - [x] Switch models per session (10 models, grouped by provider)
+- [x] Multi-provider API support: use any Hermes agent API provider (OpenAI, Anthropic, Google, etc.) directly, not just OpenRouter (Sprint 11)
 - [x] Upload files to workspace (drag-drop, click, clipboard paste)
 - [x] File tray with remove button
 - [x] Tool progress shown in activity bar above composer
@@ -78,8 +82,8 @@
 - [x] File name truncation with tooltip for long names
 - [x] Right panel resizable (drag inner edge)
 - [x] Syntax highlighted code preview (Prism.js)
-- [ ] Rename file (Wave 3)
-- [ ] Create folder (Wave 3)
+- [x] Rename file (Sprint 14)
+- [x] Create folder (Sprint 14)
 
 ### Sessions
 - [x] Create session (+ button or Cmd/Ctrl+K)
@@ -93,10 +97,12 @@
 - [x] Export session as JSON (full messages + metadata)
 - [x] Session inherits last-used workspace on creation
 - [x] Session content search (search message text across sessions)
-- [ ] Session tags / labels (Wave 5)
-- [ ] Archive sessions (Wave 5)
+- [x] Session tags / labels (Sprint 14)
+- [x] Archive sessions (Sprint 14)
 - [x] Clear conversation (wipe messages, keep session) (Wave 3)
-- [ ] Import session from JSON (Wave 3)
+- [x] Import session from JSON (Sprint 12)
+- [x] Pin/star sessions to top of list (Sprint 12)
+- [x] Duplicate session (Sprint 13)
 
 ### Workspace Management
 - [x] Add workspace with path validation (must be existing directory)
@@ -136,12 +142,12 @@
 - [x] Add/edit memory entry inline
 
 ### Configuration
-- [ ] Settings panel (default model, workspace, toolsets) (Wave 4)
-- [ ] Enable/disable toolsets per session (Wave 4)
+- [x] Settings panel (default model, default workspace) (Sprint 12)
+- [ ] Enable/disable toolsets per session (deferred)
 
 ### Notifications
-- [ ] Cron job completion alerts (Wave 4)
-- [ ] Background agent error alerts (Wave 4)
+- [x] Cron job completion alerts (Sprint 13)
+- [x] Background agent error alerts (Sprint 13)
 
 ### Advanced / Future
 - [ ] Voice input via Whisper (Wave 6)
