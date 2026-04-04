@@ -931,8 +931,21 @@ def _handle_chat_sync(handler, body):
         with CHAT_LOCK:
             from api.config import resolve_model_provider
             _model, _provider, _base_url = resolve_model_provider(s.model)
+            # Resolve API key via Hermes runtime provider (matches gateway behaviour)
+            _api_key = None
+            try:
+                from hermes_cli.runtime_provider import resolve_runtime_provider
+                _rt = resolve_runtime_provider()
+                _api_key = _rt.get("api_key")
+                # Also use runtime provider/base_url if the webui config didn't resolve them
+                if not _provider:
+                    _provider = _rt.get("provider")
+                if not _base_url:
+                    _base_url = _rt.get("base_url")
+            except Exception as _e:
+                print(f"[webui] WARNING: resolve_runtime_provider failed: {_e}", flush=True)
             agent = AIAgent(model=_model, provider=_provider, base_url=_base_url,
-                           platform='cli', quiet_mode=True,
+                           api_key=_api_key, platform='cli', quiet_mode=True,
                            enabled_toolsets=CLI_TOOLSETS, session_id=s.session_id)
             workspace_ctx = f"[Workspace: {s.workspace}]\n"
             workspace_system_msg = (
