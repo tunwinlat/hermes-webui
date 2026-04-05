@@ -124,7 +124,7 @@ async function cmdUsage(){
 }
 
 async function cmdTheme(args){
-  const themes=['dark','light','solarized','monokai','nord'];
+  const themes=['dark','slate','light','solarized','monokai','nord'];
   if(!args||!themes.includes(args.toLowerCase())){
     showToast('Usage: /theme '+themes.join('|'));
     return;

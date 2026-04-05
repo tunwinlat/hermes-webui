@@ -226,7 +226,7 @@ document.addEventListener('keydown',async e=>{
   if(e.key==='Escape'){
     // Close settings overlay if open
     const settingsOverlay=$('settingsOverlay');
-    if(settingsOverlay&&settingsOverlay.style.display!=='none'){toggleSettings();return;}
+    if(settingsOverlay&&settingsOverlay.style.display!=='none'){_closeSettingsPanel();return;}
     // Close workspace dropdown
     closeWsDropdown();
     // Clear session search

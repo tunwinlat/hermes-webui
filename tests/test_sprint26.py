@@ -74,6 +74,16 @@ def test_settings_set_theme_nord():
         post("/api/settings", {"theme": "dark"})
 
 
+def test_settings_set_theme_slate():
+    """Setting theme to 'slate' should persist."""
+    try:
+        post("/api/settings", {"theme": "slate"})
+        d, _ = get("/api/settings")
+        assert d.get("theme") == "slate"
+    finally:
+        post("/api/settings", {"theme": "dark"})
+
+
 def test_settings_custom_theme_accepted():
     """Custom theme names should be accepted (no enum gate)."""
     try:
