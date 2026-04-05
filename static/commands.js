@@ -5,6 +5,7 @@
 const COMMANDS=[
   {name:'help',      desc:'List available commands',             fn:cmdHelp},
   {name:'clear',     desc:'Clear conversation messages',         fn:cmdClear},
+  {name:'compact',   desc:'Compress conversation context',       fn:cmdCompact},
   {name:'model',     desc:'Switch model (e.g. /model gpt-4o)',  fn:cmdModel,     arg:'model_name'},
   {name:'workspace', desc:'Switch workspace by name',            fn:cmdWorkspace, arg:'name'},
   {name:'new',       desc:'Start a new chat session',            fn:cmdNew},
@@ -97,6 +98,15 @@ async function cmdNew(){
   await renderSessionList();
   $('msg').focus();
   showToast('New session created');
+}
+
+function cmdCompact(){
+  // Send as a regular message to the agent -- the agent's run_conversation
+  // preflight will detect the high token count and trigger _compress_context.
+  // We send a user message so it appears in the conversation.
+  $('msg').value='Please compress and summarize the conversation context to free up space.';
+  send();
+  showToast('Requesting context compression...');
 }
 
 async function cmdUsage(){

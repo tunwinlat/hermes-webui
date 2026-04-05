@@ -177,6 +177,17 @@ async function send(){
       renderSessionList();setBusy(false);setStatus('');
     });
 
+    source.addEventListener('compressed',e=>{
+      // Context was auto-compressed during this turn -- show a system message
+      if(!S.session||S.session.session_id!==activeSid) return;
+      try{
+        const d=JSON.parse(e.data);
+        const sysMsg={role:'assistant',content:'*[Context was auto-compressed to continue the conversation]*'};
+        S.messages.push(sysMsg);
+        showToast(d.message||'Context compressed');
+      }catch(err){}
+    });
+
     source.addEventListener('apperror',e=>{
       // Application-level error sent explicitly by the server (rate limit, crash, etc.)
       // This is distinct from the SSE network 'error' event below.

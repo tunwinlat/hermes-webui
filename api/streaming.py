@@ -12,6 +12,7 @@ from pathlib import Path
 
 from api.config import (
     STREAMS, STREAMS_LOCK, CANCEL_FLAGS, CLI_TOOLSETS,
+    LOCK, SESSIONS, SESSION_DIR,
     _get_session_agent_lock, _set_thread_env, _clear_thread_env,
     resolve_model_provider,
 )
@@ -206,6 +207,40 @@ def _run_agent_streaming(session_id, msg_text, model, workspace, stream_id, atta
                 persist_user_message=msg_text,
             )
             s.messages = result.get('messages') or s.messages
+
+            # ── Handle context compression side effects ──
+            # If compression fired inside run_conversation, the agent may have
+            # rotated its session_id. Detect and fix the mismatch so the WebUI
+            # continues writing to the correct session file.
+            _agent_sid = getattr(agent, 'session_id', None)
+            _compressed = False
+            if _agent_sid and _agent_sid != session_id:
+                old_sid = session_id
+                new_sid = _agent_sid
+                # Rename the session file
+                old_path = SESSION_DIR / f'{old_sid}.json'
+                new_path = SESSION_DIR / f'{new_sid}.json'
+                s.session_id = new_sid
+                with LOCK:
+                    if old_sid in SESSIONS:
+                        SESSIONS[new_sid] = SESSIONS.pop(old_sid)
+                if old_path.exists() and not new_path.exists():
+                    try:
+                        old_path.rename(new_path)
+                    except OSError:
+                        pass
+                _compressed = True
+            # Also detect compression via the result dict or compressor state
+            if not _compressed:
+                _compressor = getattr(agent, 'context_compressor', None)
+                if _compressor and getattr(_compressor, 'compression_count', 0) > 0:
+                    _compressed = True
+            # Notify the frontend that compression happened
+            if _compressed:
+                put('compressed', {
+                    'message': 'Context auto-compressed to continue the conversation',
+                })
+
             # Stamp 'timestamp' on any messages that don't have one yet
             _now = time.time()
             for _m in s.messages:
