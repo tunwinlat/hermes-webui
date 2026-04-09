@@ -140,12 +140,20 @@ def _hash_password(password):
 
 def get_password_hash() -> str | None:
     """Return the active password hash, or None if auth is disabled.
-    Priority: env var > settings.json."""
-    env_pw = os.getenv('HERMES_WEBUI_PASSWORD', '').strip()
-    if env_pw:
-        return _hash_password(env_pw)
+
+    Priority: settings.json > HERMES_WEBUI_PASSWORD env var.
+    This means a UI-set password always takes precedence over the env var,
+    and disabling auth via the UI (clearing the hash) is respected even
+    when the env var is set. The env var is only used as a fallback when
+    settings.json has no password hash (i.e., no password was ever set via UI)."""
     settings = load_settings()
-    return settings.get('password_hash') or None
+    settings_hash = settings.get('password_hash') or None
+    # Only use env var if settings has no password hash (first-set fallback)
+    if settings_hash is None:
+        env_pw = os.getenv('HERMES_WEBUI_PASSWORD', '').strip()
+        if env_pw:
+            return _hash_password(env_pw)
+    return settings_hash
 
 
 def is_auth_enabled() -> bool:
