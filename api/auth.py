@@ -8,9 +8,70 @@ import hmac
 import http.cookies
 import os
 import secrets
+import threading
 import time
 
 from api.config import STATE_DIR, load_settings
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+_MAX_ATTEMPTS = 5           # lock out after this many failures
+_WINDOW_SECS = 900          # 15-minute window
+_LOCKOUT_SECS = 900         # 15-minute lockout
+_ATTEMPT_RECORD_MAX = 10    # cap stored attempts per IP
+
+_rate_lock = threading.Lock()
+_rate_store: dict[str, list[float]] = {}   # ip -> list of failure timestamps
+
+
+def _get_client_ip(handler) -> str:
+    """Return the best-effort client IP, preferring X-Forwarded-For if present."""
+    xff = handler.headers.get('X-Forwarded-For', '').strip()
+    if xff:
+        return xff.split(',')[0].strip()
+    return handler.client_address[0]
+
+
+def _check_rate_limit(handler) -> tuple[bool, str]:
+    """Return (allowed, reason). If not allowed, reason describes the lockout."""
+    ip = _get_client_ip(handler)
+    now = time.time()
+    window_start = now - _WINDOW_SECS
+
+    with _rate_lock:
+        attempts = _rate_store.get(ip, [])
+
+        # Prune old entries outside the window
+        attempts = [t for t in attempts if t > window_start]
+        _rate_store[ip] = attempts
+
+        # Check for active lockout
+        if len(attempts) >= _MAX_ATTEMPTS:
+            earliest = min(attempts)
+            lockout_remaining = int(_LOCKOUT_SECS - (now - earliest))
+            if lockout_remaining > 0:
+                return False, f"Too many failed attempts. Try again in {lockout_remaining // 60} minutes."
+
+        return True, ""
+
+
+def _record_failed_attempt(handler) -> None:
+    """Log a failed login attempt for the current IP."""
+    ip = _get_client_ip(handler)
+    now = time.time()
+    with _rate_lock:
+        attempts = _rate_store.get(ip, [])
+        window_start = now - _WINDOW_SECS
+        attempts = [t for t in attempts if t > window_start]
+        attempts.append(now)
+        # Cap list size to prevent memory bloat
+        _rate_store[ip] = attempts[-_ATTEMPT_RECORD_MAX:]
+
+
+def _clear_failed_attempts(handler) -> None:
+    """Clear failed attempts on successful login."""
+    ip = _get_client_ip(handler)
+    with _rate_lock:
+        _rate_store.pop(ip, None)
 
 # ── Public paths (no auth required) ─────────────────────────────────────────
 PUBLIC_PATHS = frozenset({

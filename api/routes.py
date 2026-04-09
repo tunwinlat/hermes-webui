@@ -749,17 +749,23 @@ def handle_post(handler, parsed) -> bool:
 
     # ── Auth endpoints (POST) ──
     if parsed.path == '/api/auth/login':
-        from api.auth import verify_password, create_session, set_auth_cookie, is_auth_enabled
-        from api.auth import _check_login_rate, _record_login_attempt
+        from api.auth import (
+            verify_password, create_session, set_auth_cookie, is_auth_enabled,
+            _check_rate_limit, _record_failed_attempt, _clear_failed_attempts,
+        )
+        # Check rate limit before processing
+        allowed, reason = _check_rate_limit(handler)
+        if not allowed:
+            return bad(handler, reason, 429)
+
         if not is_auth_enabled():
             return j(handler, {'ok': True, 'message': 'Auth not enabled'})
-        client_ip = handler.client_address[0]
-        if not _check_login_rate(client_ip):
-            return j(handler, {'error': 'Too many attempts. Try again in a minute.'}, status=429)
         password = body.get('password', '')
         if not verify_password(password):
-            _record_login_attempt(client_ip)
+            _record_failed_attempt(handler)
             return bad(handler, 'Invalid password', 401)
+        # Successful login — clear failed attempts and create session
+        _clear_failed_attempts(handler)
         cookie_val = create_session()
         handler.send_response(200)
         handler.send_header('Content-Type', 'application/json')
